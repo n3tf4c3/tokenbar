@@ -1,0 +1,19 @@
+# Dependências
+node_modules/
+
+# Saída de build
+dist/
+out/
+*.vsix
+
+# Relatórios internos (auditoria/segurança) — não versionar
+relatorios/
+
+# Estado local do daemon/tray
+snapshot.json
+refresh.flag
+
+# Sistema operacional / editores
+.DS_Store
+Thumbs.db
+*.log
