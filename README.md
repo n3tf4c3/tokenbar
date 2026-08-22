@@ -69,6 +69,12 @@ então baixar esse valor não aumenta a frequência real de consulta ao Claude.
 
 ## Bandeja do Windows
 
+![Painel da bandeja do Windows: uma linha por janela de cota, com barra, percentual usado e tempo até a renovação. Abaixo, o ícone como aparece na bandeja.](docs/imagens/bandeja-windows.png)
+
+*Painel da bandeja. Embaixo, o ícone nos dois tamanhos que o Windows pede — ele mostra o
+percentual mais crítico e muda de cor conforme a cota aperta. Imagem gerada pelo próprio
+projeto com `tray\tokenbar.ps1 -PreviewPath`.*
+
 Para acompanhar as cotas fora do VS Code, o mesmo coletor roda como daemon e alimenta um
 indicador na bandeja:
 
