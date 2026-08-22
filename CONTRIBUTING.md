@@ -81,7 +81,9 @@ O projeto não tem linter configurado; siga o que já está lá:
 Essas não são preferência estética; quebrá-las quebra o comportamento do app:
 
 1. **`usedPercent` é sempre o percentual usado**, 0–100, passando por `clampPercent()`.
-   A conversão para "restante" é responsabilidade da camada de interface.
+   Nenhuma camada inverte o sinal: barra de status, painel e bandeja mostram esse número
+   direto, para bater com o `/usage` do Claude Code. As faixas de cor (70% âmbar, 90%
+   vermelho) estão duplicadas em `toneFor()` e `Get-Tone` — mexeu numa, mexa na outra.
 2. **Não remova o piso de 5 minutos nem o backoff de 429** do coletor Claude. Eles evitam
    martelar um endpoint não documentado.
 3. **Pré-requisito ausente é `unavailable`, não `error`.** Use o helper `unavailable()`.

@@ -21,6 +21,11 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ### Alterado
 
+- **A extensão passa a mostrar o percentual _usado_, não o restante** — o mesmo número da
+  bandeja e do `/usage` do Claude Code. Vale para a barra de status, o tooltip e o painel;
+  a barra de progresso agora enche conforme a cota é consumida, em vez de esvaziar. As
+  faixas de cor da extensão foram alinhadas às da bandeja: verde abaixo de 70%, âmbar a
+  partir de 70%, vermelho a partir de 90%.
 - O HTML do painel saiu de `src/webview/dashboard.ts` para `src/webview/render.ts`, agora
   livre de `import vscode` — é o que permite renderizá-lo fora do editor. O `dashboard.ts`
   segue responsável pelo `WebviewPanel` e pelas mensagens. Sem mudança de comportamento.

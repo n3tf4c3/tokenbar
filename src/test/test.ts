@@ -55,7 +55,25 @@ assert(/script-src 'nonce-[^']+'/.test(htmlInterativo), 'painel do VS Code decla
 assert(htmlInterativo.includes('acquireVsCodeApi'), 'painel do VS Code inclui o script de refresh');
 assert(htmlPreview.includes("script-src 'none'"), 'preview declara CSP sem script');
 assert(!htmlPreview.includes('acquireVsCodeApi'), 'preview não chama a API do VS Code');
-assert(htmlInterativo.includes('70% restante'), 'painel converte usado em restante');
+assert(htmlInterativo.includes('30% usado'), 'painel mostra o percentual usado, como a bandeja');
+assert(!htmlInterativo.includes('restante'), 'painel não fala mais em restante');
+
+const tons: UsageSnapshot = {
+  collectedAt: new Date().toISOString(),
+  providers: [{
+    provider: 'codex', label: 'Codex', status: 'ok', source: 'Codex app-server',
+    collectedAt: new Date().toISOString(),
+    windows: [
+      { id: 'a', label: 'tranquila', usedPercent: 69 },
+      { id: 'b', label: 'atencao', usedPercent: 70 },
+      { id: 'c', label: 'critica', usedPercent: 90 }
+    ]
+  }]
+};
+const htmlTons = renderDashboard(tons);
+assert(htmlTons.includes('width:69%') && /healthy">69% usado/.test(htmlTons), 'abaixo de 70% usado fica verde');
+assert(/warning">70% usado/.test(htmlTons), 'a partir de 70% usado fica âmbar, como a bandeja');
+assert(/danger">90% usado/.test(htmlTons), 'a partir de 90% usado fica vermelho, como a bandeja');
 
 console.log(`\n${passed} testes passaram; ${failed} falharam.`);
 process.exitCode = failed ? 1 : 0;
