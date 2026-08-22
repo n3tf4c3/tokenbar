@@ -39,7 +39,9 @@ O TokenBar tem **um coletor** e **dois consumidores**. Todo o código de rede/IP
 | `src/collectors/claude.ts` | Lê a sessão OAuth do Claude Code e consulta as janelas de cota. Cache, backoff e tradução de erros. |
 | `src/collectors/codex.ts` | Sobe o `codex app-server` e faz o handshake para ler os limites da conta. |
 | `src/extension.ts` | Ponto de entrada do VS Code: barra de status, comandos, agendamento e persistência em `globalState`. |
-| `src/webview/dashboard.ts` | Renderiza o painel HTML (uma barra por janela) e trata a mensagem `refresh` vinda do webview. |
+| `src/webview/render.ts` | Gera o HTML do painel a partir de um `UsageSnapshot`. **Puro**: não importa `vscode`, o que permite renderizá-lo fora do editor. |
+| `src/webview/dashboard.ts` | Cria e gerencia o `WebviewPanel` do VS Code, e trata a mensagem `refresh` vinda dele. Delega o HTML ao `render.ts`. |
+| `src/preview/dashboard.ts` | Ferramenta de documentação: escreve o HTML do painel em disco para virar captura. Equivalente ao `-PreviewPath` do tray. |
 | `src/daemon.ts` | Processo Node de vida longa que publica o snapshot em disco para a bandeja. |
 | `tray/tokenbar.ps1` | Indicador do Windows. Lê o snapshot e desenha ícone/tooltip/painel com GDI+. |
 | `tray/tokenbar.vbs` | Sobe o PowerShell sem piscar console. |

@@ -34,8 +34,35 @@ O `tokenbar.ps1` inicia `dist\daemon.js` sozinho e o encerra ao sair — não su
 à mão junto com o indicador, ou você terá dois processos coletando. Para depurar só o
 coletor, rode `node dist\daemon.js 60` **sem** abrir a bandeja.
 
-`tray\tokenbar.ps1 -PreviewPath saida.png` renderiza o painel num PNG sem abrir GUI — use
-isso para revisar mudanças de layout sem precisar de screenshot.
+## Capturas da documentação
+
+As imagens do `README.md` são geradas pelo próprio projeto, não por screenshot manual — se
+você mudar o layout, regenere-as no mesmo PR.
+
+**Painel da bandeja** (`docs/imagens/bandeja-windows.png`):
+
+```powershell
+tray\tokenbar.ps1 -PreviewPath docs\imagens\bandeja-windows.png
+```
+
+Renderiza o painel e o ícone num PNG sem abrir a GUI. Use também para revisar mudanças de
+layout durante o desenvolvimento.
+
+**Painel da extensão** (`docs/imagens/painel-vscode.png`) — o webview só renderiza dentro
+do VS Code, então o caminho é gerar o HTML e fotografá-lo com um navegador headless:
+
+```powershell
+npm run compile-preview
+node dist\preview.js dashboard-preview.html
+& 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe' --headless --disable-gpu `
+  --hide-scrollbars --window-size=1240,600 `
+  --screenshot="$PWD\docs\imagens\painel-vscode.png" "file:///$PWD/dashboard-preview.html"
+```
+
+`dist/preview.js` usa o snapshot do daemon por padrão; passe um JSON como segundo argumento
+para renderizar um cenário específico (conta sem janelas, provedor em erro, dado `stale`).
+Ele chama `renderDashboard(..., { interactive: false })`, que omite o script do webview —
+o HTML abre em qualquer navegador.
 
 ## Estilo de código
 

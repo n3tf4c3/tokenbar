@@ -47,6 +47,8 @@ code --install-extension tokenbar.vsix
 
 ## Uso
 
+![Painel da extensão: um cartão por provedor, cada janela de cota com barra, percentual restante, percentual usado e horário de renovação.](docs/imagens/painel-vscode.png)
+
 Depois de ativada, a extensão mostra na barra de status a janela **mais crítica** entre
 todos os provedores, no formato `Claude 38%` — onde o número é a cota **restante**.
 
@@ -169,6 +171,7 @@ Scripts disponíveis:
 | `npm run compile` | Compila extensão e daemon |
 | `npm run compile-extension` | Só `dist/extension.js` |
 | `npm run compile-daemon` | Só `dist/daemon.js` |
+| `npm run compile-preview` | Só `dist/preview.js`, o gerador de capturas do painel |
 | `npm run watch` | Recompila a extensão a cada alteração |
 | `npm test` | Compila e roda `src/test/test.ts` |
 | `npm run package` | Gera `tokenbar.vsix` |

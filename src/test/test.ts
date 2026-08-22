@@ -1,5 +1,6 @@
 import { CodexCollector } from '../collectors/codex';
-import { clampPercent } from '../usage';
+import { clampPercent, UsageSnapshot } from '../usage';
+import { renderDashboard } from '../webview/render';
 
 let passed = 0;
 let failed = 0;
@@ -32,6 +33,29 @@ codex.appendWindow(codexWindows, { limitId: 'codex' }, {
 }, 'secondary');
 assert(codexWindows[0].label === 'Janela de 5 horas', 'Codex identifica a janela de cinco horas');
 assert(codexWindows[1].label === 'Janela semanal', 'Codex identifica a janela semanal');
+
+const snapshotDeTeste: UsageSnapshot = {
+  collectedAt: new Date().toISOString(),
+  providers: [{
+    provider: 'claude',
+    label: 'Claude',
+    status: 'ok',
+    source: 'Claude Code OAuth',
+    collectedAt: new Date().toISOString(),
+    windows: [{ id: 'five_hour', label: '<img src=x onerror=alert(1)>', usedPercent: 30 }]
+  }]
+};
+
+const htmlInterativo = renderDashboard(snapshotDeTeste);
+const htmlPreview = renderDashboard(snapshotDeTeste, { interactive: false });
+
+assert(!htmlInterativo.includes('<img src=x'), 'rótulo vindo do provedor é escapado no HTML');
+assert(htmlInterativo.includes('&lt;img src=x'), 'rótulo escapado aparece como texto');
+assert(/script-src 'nonce-[^']+'/.test(htmlInterativo), 'painel do VS Code declara CSP com nonce');
+assert(htmlInterativo.includes('acquireVsCodeApi'), 'painel do VS Code inclui o script de refresh');
+assert(htmlPreview.includes("script-src 'none'"), 'preview declara CSP sem script');
+assert(!htmlPreview.includes('acquireVsCodeApi'), 'preview não chama a API do VS Code');
+assert(htmlInterativo.includes('70% restante'), 'painel converte usado em restante');
 
 console.log(`\n${passed} testes passaram; ${failed} falharam.`);
 process.exitCode = failed ? 1 : 0;

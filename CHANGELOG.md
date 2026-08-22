@@ -13,7 +13,17 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
   `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` e este changelog.
 - `.gitignore` e workflow de CI no GitHub Actions (compilação e testes em push e PR).
 - Metadados de repositório no `package.json` (`license`, `repository`, `bugs`, `homepage`).
-- Captura do painel da bandeja no `README.md`, gerada pelo próprio `-PreviewPath`.
+- Capturas do painel da bandeja e do painel da extensão no `README.md`, ambas geradas pelo
+  próprio projeto — a primeira pelo `-PreviewPath` do tray, a segunda pelo novo
+  `dist/preview.js`.
+- `npm run compile-preview` e `src/preview/dashboard.ts`: escrevem o HTML do painel em disco
+  para virar captura, a partir do snapshot do daemon ou de um JSON de exemplo.
+
+### Alterado
+
+- O HTML do painel saiu de `src/webview/dashboard.ts` para `src/webview/render.ts`, agora
+  livre de `import vscode` — é o que permite renderizá-lo fora do editor. O `dashboard.ts`
+  segue responsável pelo `WebviewPanel` e pelas mensagens. Sem mudança de comportamento.
 
 ### Segurança
 
