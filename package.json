@@ -1,0 +1,69 @@
+{
+  "name": "tokenbar",
+  "publisher": "pepg",
+  "displayName": "TokenBar",
+  "description": "Acompanhe as cotas reais das assinaturas Claude e Codex.",
+  "version": "0.1.1",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/n3tf4c3/tokenbar.git"
+  },
+  "bugs": {
+    "url": "https://github.com/n3tf4c3/tokenbar/issues"
+  },
+  "homepage": "https://github.com/n3tf4c3/tokenbar#readme",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:tokenbar.openDashboard",
+    "onCommand:tokenbar.refresh"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "tokenbar.openDashboard",
+        "title": "TokenBar: Open Dashboard"
+      },
+      {
+        "command": "tokenbar.refresh",
+        "title": "TokenBar: Atualizar cotas"
+      }
+    ],
+    "configuration": {
+      "title": "TokenBar Configuration",
+      "properties": {
+        "tokenbar.refreshInterval": {
+          "type": "integer",
+          "default": 60,
+          "minimum": 15,
+          "maximum": 3600,
+          "description": "Intervalo, em segundos, para atualizar as cotas das assinaturas."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "npm run compile-extension && npm run compile-daemon",
+    "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --watch",
+    "compile-tests": "esbuild src/test/test.ts --bundle --platform=node --outfile=dist/test.js",
+    "test": "npm run compile-tests && node dist/test.js",
+    "package": "vsce package --no-dependencies --out tokenbar.vsix",
+    "compile-daemon": "esbuild src/daemon.ts --bundle --outfile=dist/daemon.js --format=cjs --platform=node",
+    "compile-extension": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node"
+  },
+  "devDependencies": {
+    "@types/node": "^18.11.18",
+    "@types/vscode": "^1.75.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.17.11",
+    "typescript": "^4.9.5"
+  }
+}
