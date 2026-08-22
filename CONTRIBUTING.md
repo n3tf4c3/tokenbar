@@ -27,9 +27,12 @@ Para a bandeja:
 
 ```powershell
 npm run compile-daemon
-node dist\daemon.js 60          # deixa rodando em um terminal
-wscript tray\tokenbar.vbs       # sobe o indicador
+wscript tray\tokenbar.vbs       # o próprio script sobe o daemon
 ```
+
+O `tokenbar.ps1` inicia `dist\daemon.js` sozinho e o encerra ao sair — não suba o daemon
+à mão junto com o indicador, ou você terá dois processos coletando. Para depurar só o
+coletor, rode `node dist\daemon.js 60` **sem** abrir a bandeja.
 
 `tray\tokenbar.ps1 -PreviewPath saida.png` renderiza o painel num PNG sem abrir GUI — use
 isso para revisar mudanças de layout sem precisar de screenshot.

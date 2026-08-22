@@ -12,6 +12,13 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 - Documentação do projeto: `README.md` expandido, `docs/arquitetura.md`, `SECURITY.md`,
   `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` e este changelog.
 - `.gitignore` e workflow de CI no GitHub Actions (compilação e testes em push e PR).
+- Metadados de repositório no `package.json` (`license`, `repository`, `bugs`, `homepage`).
+
+### Segurança
+
+- O painel agora declara `Content-Security-Policy` com nonce por renderização e restringe
+  `localResourceRoots` ao diretório da extensão. O handler inline do botão "Atualizar agora"
+  virou `addEventListener`, exigido pela CSP. Sem mudança de comportamento visível.
 
 ## [0.1.1]
 
