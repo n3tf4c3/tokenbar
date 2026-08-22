@@ -9,3 +9,5 @@ tray/**
 .github/**
 .gitignore
 relatorios/**
+dist/preview.js
+docs/imagens/**

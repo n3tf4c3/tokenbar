@@ -57,7 +57,8 @@
     "test": "npm run compile-tests && node dist/test.js",
     "package": "vsce package --no-dependencies --out tokenbar.vsix",
     "compile-daemon": "esbuild src/daemon.ts --bundle --outfile=dist/daemon.js --format=cjs --platform=node",
-    "compile-extension": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node"
+    "compile-extension": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "compile-preview": "esbuild src/preview/dashboard.ts --bundle --outfile=dist/preview.js --format=cjs --platform=node"
   },
   "devDependencies": {
     "@types/node": "^18.11.18",
