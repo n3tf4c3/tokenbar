@@ -47,10 +47,10 @@ code --install-extension tokenbar.vsix
 
 ## Uso
 
-![Painel da extensão: um cartão por provedor, cada janela de cota com barra, percentual restante, percentual usado e horário de renovação.](docs/imagens/painel-vscode.png)
+![Painel da extensão: um cartão por provedor, cada janela de cota com barra, percentual usado e horário de renovação.](docs/imagens/painel-vscode.png)
 
 Depois de ativada, a extensão mostra na barra de status a janela **mais crítica** entre
-todos os provedores, no formato `Claude 38%` — onde o número é a cota **restante**.
+todos os provedores, no formato `Claude 84%` — onde o número é a cota já **usada** na janela.
 
 | Comando | Ação |
 | --- | --- |
@@ -99,8 +99,9 @@ wscript tray\tokenbar.vbs
 - "Iniciar com o Windows" cria/remove um atalho `TokenBar.lnk` na pasta de Inicialização
   do usuário.
 
-> **Atenção à diferença de sinal:** o painel da extensão mostra o percentual **restante**;
-> o painel da bandeja mostra o percentual **usado** (igual ao `/usage` do Claude Code).
+> Extensão e bandeja mostram o mesmo número: o percentual **usado** na janela, igual ao
+> `/usage` do Claude Code. As faixas de cor também são as mesmas — verde abaixo de 70%,
+> âmbar a partir de 70%, vermelho a partir de 90%.
 
 ## Como os dados são obtidos
 

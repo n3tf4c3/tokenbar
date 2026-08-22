@@ -78,9 +78,14 @@ E cada `UsageWindow`:
 }
 ```
 
-Regra de ouro: **`usedPercent` é sempre o percentual usado**. A conversão para "restante"
-acontece só na camada de apresentação da extensão (`100 - usedPercent`). A bandeja mostra
-`usedPercent` direto, para bater com o `/usage` do Claude Code.
+Regra de ouro: **`usedPercent` é sempre o percentual usado**, do coletor até a tela. Nenhuma
+camada de apresentação inverte o sinal — barra de status, painel da extensão e bandeja
+mostram `usedPercent` direto, para bater com o `/usage` do Claude Code.
+
+As faixas de cor derivam do mesmo número e são iguais nas duas interfaces: verde abaixo de
+70%, âmbar a partir de 70%, vermelho a partir de 90%. Implementadas em `toneFor()`
+(`src/webview/render.ts`) e `Get-Tone` (`tray/tokenbar.ps1`) — são duas linguagens, então
+os cortes estão duplicados; ao mexer numa, mexa na outra.
 
 ### Distinção de estados
 

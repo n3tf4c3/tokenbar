@@ -22,11 +22,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       return;
     }
     const mostUrgent = providers
-      .flatMap(provider => provider.windows.map(window => ({ provider: provider.label, remaining: Math.max(0, 100 - window.usedPercent) })))
-      .sort((a, b) => a.remaining - b.remaining)[0];
-    statusBar.text = `$(pulse) ${mostUrgent.provider} ${mostUrgent.remaining.toFixed(0)}%`;
+      .flatMap(provider => provider.windows.map(window => ({ provider: provider.label, used: window.usedPercent })))
+      .sort((a, b) => b.used - a.used)[0];
+    statusBar.text = `$(pulse) ${mostUrgent.provider} ${mostUrgent.used.toFixed(0)}%`;
     statusBar.tooltip = new vscode.MarkdownString(providers.map(provider => {
-      const lines = provider.windows.map(window => `- ${window.label}: **${Math.max(0, 100 - window.usedPercent).toFixed(0)}% restante**`);
+      const lines = provider.windows.map(window => `- ${window.label}: **${window.usedPercent.toFixed(0)}% usado**`);
       return `### ${provider.label}\n${lines.join('\n')}`;
     }).join('\n\n'));
   };
