@@ -13,6 +13,7 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
   `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` e este changelog.
 - `.gitignore` e workflow de CI no GitHub Actions (compilação e testes em push e PR).
 - Metadados de repositório no `package.json` (`license`, `repository`, `bugs`, `homepage`).
+- Captura do painel da bandeja no `README.md`, gerada pelo próprio `-PreviewPath`.
 
 ### Segurança
 
