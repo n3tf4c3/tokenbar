@@ -34,6 +34,7 @@ O TokenBar tem **um coletor** e **dois consumidores**. Todo o código de rede/IP
 
 | Arquivo | Responsabilidade |
 | --- | --- |
+| `src/version.ts` | Versão anunciada aos provedores. Existe para não repetir literal em dois coletores; um teste falha se divergir do `package.json`. |
 | `src/usage.ts` | Tipos do domínio (`UsageWindow`, `ProviderSnapshot`, `UsageSnapshot`), o contrato `UsageCollector` e dois helpers: `unavailable()` e `clampPercent()`. |
 | `src/usageManager.ts` | Orquestra os coletores. Deduplica refreshes concorrentes, guarda o último snapshot e notifica listeners. |
 | `src/collectors/claude.ts` | Lê a sessão OAuth do Claude Code e consulta as janelas de cota. Cache, backoff e tradução de erros. |
@@ -114,11 +115,18 @@ o piso de 5 minutos sobreviver a reinícios.
 Três guardas, nesta ordem:
 
 1. **Backoff ativo** (`backoffUntil`): definido ao receber 429, usando `Retry-After` ou
-   10 minutos. Enquanto vigora, devolve cache.
+   10 minutos.
 2. **Piso de 5 minutos** (`MIN_REFRESH_MS`): mesmo sem erro, não há chamada de rede antes
-   disso. Devolve cache.
+   disso.
 3. **Fallback em erro**: qualquer falha com cache disponível devolve o cache com
    `stale: true` e a mensagem do erro, em vez de apagar o número da tela.
+
+As duas primeiras são decididas por `claudeThrottleReason()`, uma função pura que recebe
+só os três carimbos de tempo. Ela **não sabe se existe cache**, e isso é proposital: a
+versão anterior condicionava as guardas a haver um snapshot guardado, então uma instalação
+que ainda não tinha coletado com sucesso ignorava tanto o piso quanto o backoff. Quem
+decide o que *mostrar* enquanto a consulta está travada é `throttled()` — cache, se houver;
+senão o último diagnóstico, que é mais útil ao usuário que um "aguarde".
 
 Só uma coleta com pelo menos uma janela atualiza o cache e zera o backoff.
 
@@ -152,14 +160,22 @@ Diretório: `%LOCALAPPDATA%\tokenbar\` (fallback para o home do usuário).
 A escrita atômica evita que a bandeja leia um JSON pela metade. O flag é o único canal de
 comando bandeja → daemon; não há socket nem porta aberta.
 
+O rename é atômico, mas não é infalível: no Windows ele falha com `EPERM` se a bandeja
+estiver com o `snapshot.json` aberto naquele instante. O daemon guarda o snapshot pendente
+e repete a cada 500 ms até publicar. Isso não pode virar exceção — a publicação roda dentro
+de um listener do `UsageManager`, e uma exceção ali rejeitaria o refresh, derrubando o
+processo por rejeição não tratada e levando junto o backoff, que só existe em memória.
+
 ## Decisões e trade-offs
 
 - **Sem dependências de runtime.** Só `https` e `child_process` do Node. Reduz superfície de
   supply chain e mantém o `.vsix` pequeno.
 - **Bundle com esbuild**, não `tsc`. Compilação em milissegundos, um arquivo por alvo.
-- **Suíte de testes sem framework.** Cobre o que é puro (`clampPercent`, rotulagem de
-  janelas do Codex). Rede e processo filho não são testados — exigiriam mocks que
-  custariam mais que o valor entregue neste tamanho de projeto.
+- **Suíte de testes sem framework.** Cobre o que é puro (`clampPercent`, rotulagem e
+  duração das janelas do Codex, `claudeThrottleReason`, escape e CSP do painel). Rede e
+  processo filho não são testados — exigiriam mocks que custariam mais que o valor
+  entregue neste tamanho de projeto. Quando a lógica de uma dessas bordas importa, o
+  caminho é extraí-la para uma função pura, como foi feito com a cadência do Claude.
 - **HTML gerado por template string**, sem framework de webview. Todo dado externo passa por
   `escapeHtml()` antes de ser interpolado.
 - **Bandeja em PowerShell**, não num app nativo. Zero build extra no Windows, e o script é
