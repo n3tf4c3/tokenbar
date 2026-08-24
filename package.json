@@ -20,9 +20,7 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "onCommand:tokenbar.openDashboard",
-    "onCommand:tokenbar.refresh"
+    "onStartupFinished"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -61,10 +59,10 @@
     "compile-preview": "esbuild src/preview/dashboard.ts --bundle --outfile=dist/preview.js --format=cjs --platform=node"
   },
   "devDependencies": {
-    "@types/node": "^18.11.18",
-    "@types/vscode": "^1.75.0",
+    "@types/node": "^18.19.130",
+    "@types/vscode": "1.75.0",
     "@vscode/vsce": "^3.9.2",
-    "esbuild": "^0.17.11",
-    "typescript": "^4.9.5"
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
   }
 }

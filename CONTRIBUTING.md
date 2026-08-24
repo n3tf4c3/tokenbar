@@ -74,6 +74,10 @@ O projeto não tem linter configurado; siga o que já está lá:
   campos de API em inglês.
 - Nada de dependências de runtime novas. Se precisar de uma, justifique na issue — a
   ausência delas é uma decisão de segurança, não um acaso.
+- `@types/vscode` e `@types/node` ficam **presos de propósito** na versão mais antiga que o
+  projeto suporta (`engines.vscode` e o Node do extension host, respectivamente). O
+  `npm outdated` sempre vai reclamar deles; não bumpe sem subir também o mínimo suportado.
+  Tipos à frente do runtime fazem o typecheck aceitar API que não existe em produção.
 - Comentários só onde o "porquê" não é óbvio pelo código.
 
 ## Regras específicas dos coletores

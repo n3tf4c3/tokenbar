@@ -30,6 +30,45 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
   livre de `import vscode` — é o que permite renderizá-lo fora do editor. O `dashboard.ts`
   segue responsável pelo `WebviewPanel` e pelas mensagens. Sem mudança de comportamento.
 
+### Corrigido
+
+- **O backoff de 429 e o piso de 5 minutos do coletor Claude passam a valer sem cache.** As
+  duas guardas dependiam de haver um snapshot guardado, então uma instalação que ainda não
+  tinha coletado com sucesso — ou que tomasse 429 antes da primeira coleta — consultava o
+  endpoint a cada refresh (15–60 s), justamente quando o serviço pediu para esperar. A
+  decisão de cadência virou a função pura `claudeThrottleReason()`, que não recebe o cache
+  e por isso não tem como voltar a acoplar as duas coisas. Coberta por teste.
+- **O daemon não morre mais quando a bandeja está lendo o `snapshot.json`.** No Windows,
+  renomear por cima de um arquivo aberto para leitura falha com `EPERM`. A exceção subia
+  pelo listener do `UsageManager`, rejeitava o refresh e, sem ninguém para capturá-la,
+  encerrava o processo — levando junto o `backoffUntil`, que só existe em memória. A
+  publicação agora repete a cada 500 ms até passar, e o daemon tem rede de segurança para
+  rejeições não tratadas.
+- A extensão captura falhas de coleta na ativação e no agendamento, em vez de deixar a
+  ativação abortar ou uma promise rejeitada solta no extension host.
+- O coletor Codex procura o CLI também no PATH, não só em `%APPDATA%\npm\codex.cmd`. Quem
+  usa nvm-windows, Volta, pnpm ou um `npm prefix` próprio via "Codex CLI não foi
+  encontrado" mesmo com o `codex` instalado e funcionando.
+- A barra de status ignora provedores `ok` sem nenhuma janela, em vez de contar com a
+  garantia implícita de que isso nunca acontece.
+
+### Alterado
+
+- `src/version.ts` centraliza a versão anunciada aos provedores (`User-Agent` do Claude e
+  `clientInfo` do Codex), que estava congelada em `0.1.0` desde a primeira release. Um
+  teste falha se ela divergir do `package.json`.
+- `activationEvents` perdeu as entradas `onCommand:`, redundantes desde o VS Code 1.74.
+- `@types/vscode` fixado em `1.75.0`, igual ao mínimo declarado em `engines.vscode`, para o
+  typecheck não aceitar API que não existe na versão suportada.
+- `dist/daemon.js` saiu do `.vsix` — a bandeja roda a partir do repositório, não da
+  extensão instalada.
+- esbuild 0.17 → 0.28 e TypeScript 4.9 → 7.0 (dependências de desenvolvimento), zerando os
+  avisos do `npm audit`. O TypeScript 7 não inclui mais os pacotes `@types` automaticamente,
+  então o `tsconfig.json` passou a declarar `"types": ["node"]`.
+- `@types/node` segue em 18 e `@types/vscode` em 1.75.0 de propósito: os tipos ficam na
+  versão mais antiga que o projeto suporta, para o typecheck não aceitar API inexistente em
+  produção. O `npm outdated` vai reclamar dos dois; está documentado no `CONTRIBUTING.md`.
+
 ### Segurança
 
 - O painel agora declara `Content-Security-Policy` com nonce por renderização e restringe
