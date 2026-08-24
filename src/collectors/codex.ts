@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { clampPercent, ProviderSnapshot, unavailable, UsageCollector, UsageWindow } from '../usage';
+import { VERSION } from '../version';
 
 interface RateLimitWindow {
   usedPercent: number;
@@ -141,19 +142,39 @@ export class CodexCollector implements UsageCollector {
       child.stdin.write(`${JSON.stringify({
         method: 'initialize',
         id: 1,
-        params: { clientInfo: { name: 'tokenbar', title: 'TokenBar', version: '0.1.0' }, capabilities: null }
+        params: { clientInfo: { name: 'tokenbar', title: 'TokenBar', version: VERSION }, capabilities: null }
       })}\n`);
     });
   }
 
   private spawnCodex(): ChildProcessWithoutNullStreams {
     if (process.platform === 'win32') {
-      const command = path.join(process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'), 'npm', 'codex.cmd');
-      if (!fs.existsSync(command)) {
+      const command = this.findCodexOnWindows();
+      if (!command) {
         throw new Error('missing');
       }
       return spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/c', command, 'app-server', '--stdio'], { windowsHide: true });
     }
     return spawn('codex', ['app-server', '--stdio']);
+  }
+
+  /**
+   * O prefixo padrão do npm vem primeiro, mas quem usa nvm-windows, Volta, pnpm ou um
+   * `npm prefix` próprio tem o `codex` só no PATH. Resolvemos o caminho aqui, em vez de
+   * deixar o cmd.exe resolver, para distinguir "CLI ausente" (pré-requisito, não é erro)
+   * de "o app-server morreu".
+   */
+  private findCodexOnWindows(): string | undefined {
+    const appData = process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming');
+    const candidates = [path.join(appData, 'npm', 'codex.cmd')];
+    for (const directory of (process.env.PATH ?? '').split(path.delimiter)) {
+      if (!directory) {
+        continue;
+      }
+      for (const extension of ['.cmd', '.exe', '.bat']) {
+        candidates.push(path.join(directory.replace(/^"|"$/g, ''), `codex${extension}`));
+      }
+    }
+    return candidates.find(candidate => fs.existsSync(candidate));
   }
 }

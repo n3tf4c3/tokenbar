@@ -117,9 +117,12 @@ wscript tray\tokenbar.vbs
 Resiliência:
 
 - **Piso de 5 minutos** entre chamadas de rede — coletas mais frequentes devolvem o último
-  dado válido, marcado como `stale`.
+  dado válido, marcado como `stale`, ou o último diagnóstico se ainda não houver dado.
 - **Backoff em HTTP 429**, respeitando o header `Retry-After` quando presente, ou 10
   minutos por padrão.
+
+As duas guardas valem desde a primeira coleta, inclusive numa instalação que ainda não
+consultou o serviço com sucesso.
 - **Timeout de 10 s**.
 - Um `401` é traduzido em "a sessão do Claude expirou; entre novamente no Claude Code".
 
@@ -130,8 +133,8 @@ Resiliência:
 
 ### Codex
 
-1. Sobe `codex app-server --stdio` como processo filho (no Windows, via
-   `%APPDATA%\npm\codex.cmd`).
+1. Sobe `codex app-server --stdio` como processo filho (no Windows, procurando
+   `%APPDATA%\npm\codex.cmd` primeiro e depois o PATH).
 2. Troca mensagens JSON por linha: `initialize` (id 1) → `initialized` →
    `account/rateLimits/read` (id 2).
 3. Converte cada janela `primary`/`secondary` de cada limite. A duração devolvida pelo

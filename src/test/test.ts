@@ -1,5 +1,9 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import { claudeThrottleReason, MIN_REFRESH_MS } from '../collectors/claude';
 import { CodexCollector } from '../collectors/codex';
 import { clampPercent, UsageSnapshot } from '../usage';
+import { VERSION } from '../version';
 import { renderDashboard } from '../webview/render';
 
 let passed = 0;
@@ -33,6 +37,17 @@ codex.appendWindow(codexWindows, { limitId: 'codex' }, {
 }, 'secondary');
 assert(codexWindows[0].label === 'Janela de 5 horas', 'Codex identifica a janela de cinco horas');
 assert(codexWindows[1].label === 'Janela semanal', 'Codex identifica a janela semanal');
+
+assert(codex.formatDuration(2880) === '2 dias', 'duração em múltiplo de dia vira dias');
+assert(codex.formatDuration(180) === '3 horas', 'duração em múltiplo de hora vira horas');
+assert(codex.formatDuration(45) === '45 minutos', 'duração quebrada fica em minutos');
+
+const agora = 1_800_000_000_000;
+assert(claudeThrottleReason(agora, 0, 0) === undefined, 'sem tentativa anterior, o Claude pode ser consultado');
+assert(claudeThrottleReason(agora, agora - 60_000, 0) === 'floor', 'o piso de 5 minutos bloqueia a consulta');
+assert(claudeThrottleReason(agora, agora - MIN_REFRESH_MS, 0) === undefined, 'passados 5 minutos, a consulta é liberada');
+assert(claudeThrottleReason(agora, 0, agora + 600_000) === 'backoff', 'o backoff de 429 bloqueia mesmo sem tentativa recente');
+assert(claudeThrottleReason(agora, 0, agora - 1) === undefined, 'backoff vencido não bloqueia');
 
 const snapshotDeTeste: UsageSnapshot = {
   collectedAt: new Date().toISOString(),
@@ -74,6 +89,9 @@ const htmlTons = renderDashboard(tons);
 assert(htmlTons.includes('width:69%') && /healthy">69% usado/.test(htmlTons), 'abaixo de 70% usado fica verde');
 assert(/warning">70% usado/.test(htmlTons), 'a partir de 70% usado fica âmbar, como a bandeja');
 assert(/danger">90% usado/.test(htmlTons), 'a partir de 90% usado fica vermelho, como a bandeja');
+
+const manifesto = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+assert(manifesto.version === VERSION, `versão anunciada aos provedores acompanha o package.json (${VERSION})`);
 
 console.log(`\n${passed} testes passaram; ${failed} falharam.`);
 process.exitCode = failed ? 1 : 0;

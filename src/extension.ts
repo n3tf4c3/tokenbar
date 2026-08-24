@@ -15,7 +15,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const updateStatusBar = () => {
     const snapshot = manager.getSnapshot();
-    const providers = snapshot.providers.filter(provider => provider.status === 'ok');
+    const providers = snapshot.providers.filter(provider => provider.status === 'ok' && provider.windows.length);
     if (!providers.length) {
       statusBar.text = '$(warning) TokenBar';
       statusBar.tooltip = 'Nenhuma cota disponível. Clique para ver o diagnóstico.';
@@ -31,12 +31,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }).join('\n\n'));
   };
 
+  // Nunca propaga: falhar aqui abortaria a ativação da extensão, e no agendamento viraria
+  // uma promise rejeitada sem dono. Os coletores já traduzem erro em snapshot; o catch é
+  // para o que escapar disso.
   const refresh = async (showProgress = false) => {
     statusBar.text = '$(sync~spin) TokenBar';
-    if (showProgress) {
-      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Atualizando cotas das assinaturas…' }, () => manager.refresh());
-    } else {
-      await manager.refresh();
+    try {
+      if (showProgress) {
+        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Atualizando cotas das assinaturas…' }, () => manager.refresh());
+      } else {
+        await manager.refresh();
+      }
+    } catch (error) {
+      console.error('TokenBar: falha ao atualizar as cotas.', error);
     }
     updateStatusBar();
   };
@@ -56,21 +63,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('tokenbar.refresh', () => refresh(true)),
     vscode.workspace.onDidChangeConfiguration(event => {
       if (event.affectsConfiguration('tokenbar.refreshInterval')) {
-        scheduleRefresh(manager, updateStatusBar);
+        scheduleRefresh(refresh);
       }
     })
   );
 
-  scheduleRefresh(manager, updateStatusBar);
+  scheduleRefresh(refresh);
   await refresh();
 }
 
-function scheduleRefresh(manager: UsageManager, onUpdated: () => void): void {
+function scheduleRefresh(refresh: () => Promise<void>): void {
   if (refreshTimer) {
     clearInterval(refreshTimer);
   }
   const seconds = vscode.workspace.getConfiguration('tokenbar').get<number>('refreshInterval', 60);
-  refreshTimer = setInterval(() => manager.refresh().then(onUpdated), Math.max(15, seconds) * 1000);
+  refreshTimer = setInterval(() => void refresh(), Math.max(15, seconds) * 1000);
 }
 
 export function deactivate(): void {

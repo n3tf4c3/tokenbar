@@ -3,8 +3,25 @@ import * as https from 'https';
 import * as os from 'os';
 import * as path from 'path';
 import { clampPercent, ProviderSnapshot, unavailable, UsageCollector } from '../usage';
+import { VERSION } from '../version';
 
-const MIN_REFRESH_MS = 5 * 60 * 1000;
+export const MIN_REFRESH_MS = 5 * 60 * 1000;
+
+/**
+ * Decide se a consulta de rede pode sair agora. Pura e sem qualquer noção de cache: foi
+ * justamente o acoplamento entre "tenho snapshot guardado" e "posso consultar" que fazia o
+ * backoff de 429 e o piso de 5 minutos serem ignorados em instalações que ainda não tinham
+ * coletado com sucesso.
+ */
+export function claudeThrottleReason(now: number, lastAttemptAt: number, backoffUntil: number): 'backoff' | 'floor' | undefined {
+  if (now < backoffUntil) {
+    return 'backoff';
+  }
+  if (now - lastAttemptAt < MIN_REFRESH_MS) {
+    return 'floor';
+  }
+  return undefined;
+}
 
 class ClaudeHttpError extends Error {
   public constructor(public readonly statusCode: number, message: string, public readonly retryAt?: number) {
@@ -41,6 +58,7 @@ export class ClaudeCollector implements UsageCollector {
   private lastSnapshot?: ProviderSnapshot;
   private lastAttemptAt = 0;
   private backoffUntil = 0;
+  private lastFailure?: { message: string; status: 'unavailable' | 'error' };
 
   public constructor(initialSnapshot?: ProviderSnapshot) {
     this.lastSnapshot = initialSnapshot;
@@ -49,11 +67,18 @@ export class ClaudeCollector implements UsageCollector {
   }
 
   public async collect(): Promise<ProviderSnapshot> {
-    const now = Date.now();
-    if (this.lastSnapshot && (now < this.backoffUntil || now - this.lastAttemptAt < MIN_REFRESH_MS)) {
-      return this.cachedSnapshot(now < this.backoffUntil
-        ? 'O Claude limitou novas consultas. Exibindo o último dado válido até a próxima tentativa.'
-        : 'Exibindo o último dado válido; o Claude será consultado novamente em alguns minutos.');
+    const reason = claudeThrottleReason(Date.now(), this.lastAttemptAt, this.backoffUntil);
+    if (reason === 'backoff') {
+      return this.throttled(
+        'O Claude limitou novas consultas. Exibindo o último dado válido até a próxima tentativa.',
+        'Limite temporário de consultas do Claude. Tente novamente em alguns minutos.'
+      );
+    }
+    if (reason === 'floor') {
+      return this.throttled(
+        'Exibindo o último dado válido; o Claude será consultado novamente em alguns minutos.',
+        'Aguardando o intervalo mínimo de 5 minutos entre consultas ao Claude.'
+      );
     }
 
     const credentialsPath = path.join(os.homedir(), '.claude', '.credentials.json');
@@ -119,22 +144,44 @@ export class ClaudeCollector implements UsageCollector {
       if (windows.length) {
         this.lastSnapshot = snapshot;
         this.backoffUntil = 0;
+        this.lastFailure = undefined;
+      } else {
+        this.lastFailure = { message: snapshot.message!, status: 'unavailable' };
       }
       return snapshot;
     } catch (error) {
       if (error instanceof ClaudeHttpError && error.statusCode === 429) {
         this.backoffUntil = error.retryAt ?? Date.now() + 10 * 60 * 1000;
+        this.lastFailure = { message: 'Limite temporário de consultas do Claude. Tente novamente em alguns minutos.', status: 'unavailable' };
         if (this.lastSnapshot) {
           return this.cachedSnapshot('O Claude limitou temporariamente as consultas. Exibindo o último dado válido.');
         }
-        return unavailable(this.provider, 'Claude', 'Claude Code OAuth', 'Limite temporário de consultas do Claude. Tente novamente em alguns minutos.');
+        return unavailable(this.provider, 'Claude', 'Claude Code OAuth', this.lastFailure.message);
       }
       const message = error instanceof Error ? error.message : String(error);
+      this.lastFailure = { message, status: 'error' };
       if (this.lastSnapshot) {
         return this.cachedSnapshot(`Não foi possível atualizar o Claude: ${message}`);
       }
       return unavailable(this.provider, 'Claude', 'Claude Code OAuth', message, 'error');
     }
+  }
+
+  /**
+   * Resposta enquanto a cadência trava a consulta: com cache, mostra o último dado válido;
+   * sem cache, repete o último diagnóstico — que é mais acionável que "aguarde".
+   */
+  private throttled(cachedMessage: string, emptyMessage: string): ProviderSnapshot {
+    if (this.lastSnapshot) {
+      return this.cachedSnapshot(cachedMessage);
+    }
+    return unavailable(
+      this.provider,
+      'Claude',
+      'Claude Code OAuth',
+      this.lastFailure?.message ?? emptyMessage,
+      this.lastFailure?.status
+    );
   }
 
   private cachedSnapshot(message: string): ProviderSnapshot {
@@ -157,7 +204,7 @@ export class ClaudeCollector implements UsageCollector {
           Accept: 'application/json',
           Authorization: `Bearer ${accessToken}`,
           'Anthropic-Beta': 'oauth-2025-04-20',
-          'User-Agent': 'tokenbar/0.1.0'
+          'User-Agent': `tokenbar/${VERSION}`
         },
         timeout: 10_000
       }, response => {
