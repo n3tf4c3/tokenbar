@@ -27,12 +27,15 @@ interface RateLimitResponse {
 export class CodexCollector implements UsageCollector {
   public readonly provider = 'codex' as const;
 
-  public async collect(): Promise<ProviderSnapshot> {
+  public async collect(_force = false): Promise<ProviderSnapshot> {
     try {
       const result = await this.readRateLimits();
-      const snapshots = result.rateLimitsByLimitId && Object.keys(result.rateLimitsByLimitId).length
-        ? Object.values(result.rateLimitsByLimitId)
-        : [result.rateLimits];
+      const mainSnapshot = result.rateLimits ?? result.rateLimitsByLimitId?.codex;
+      const snapshots = mainSnapshot
+        ? [mainSnapshot]
+        : result.rateLimitsByLimitId
+        ? Object.values(result.rateLimitsByLimitId).filter(s => s.limitId !== 'base_model_inference' && s.limitName !== 'gpt-reserve')
+        : [];
       const windows: UsageWindow[] = [];
       let plan: string | undefined;
 

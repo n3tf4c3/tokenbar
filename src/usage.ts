@@ -28,7 +28,7 @@ export interface UsageSnapshot {
 
 export interface UsageCollector {
   readonly provider: ProviderId;
-  collect(): Promise<ProviderSnapshot>;
+  collect(force?: boolean): Promise<ProviderSnapshot>;
 }
 
 export function unavailable(
