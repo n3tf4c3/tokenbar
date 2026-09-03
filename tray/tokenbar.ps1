@@ -6,6 +6,7 @@
 [CmdletBinding()]
 param(
   [int] $IntervalSeconds = 60,
+  [double] $Opacity = 0.92,
   [string] $PreviewPath
 )
 
@@ -280,8 +281,11 @@ function New-TrayIcon {
 }
 
 function Get-TooltipText {
+  $providers = Get-VisibleProviders
+  if (-not $providers.Count) { return 'TokenBar - sem dados' }
+
   $parts = @()
-  foreach ($provider in (Get-VisibleProviders)) {
+  foreach ($provider in $providers) {
     if ($provider.status -ne 'ok') {
       $parts += ('{0}: indisponivel' -f $provider.label)
       continue
@@ -290,12 +294,29 @@ function Get-TooltipText {
     foreach ($window in @($provider.windows)) {
       $values += ('{0} {1:0}%' -f (Get-WindowShortLabel $window), [double] $window.usedPercent)
     }
-    $parts += ('{0} {1}' -f $provider.label, ($values -join ' '))
+    $parts += ('{0}: {1}' -f $provider.label, ($values -join ' '))
   }
-  if (-not $parts.Count) { return 'TokenBar - sem dados' }
-  $text = $parts -join ' | '
-  if ($text.Length -gt 63) { $text = $text.Substring(0, 60) + '...' }
-  return $text
+  $full = $parts -join ' | '
+  if ($full.Length -le 63) { return $full }
+
+  # Compact fallback: exibe a janela mais critica de cada provedor
+  $shortParts = @()
+  foreach ($provider in $providers) {
+    if ($provider.status -ne 'ok') {
+      $shortParts += ('{0}: indisponivel' -f $provider.label)
+      continue
+    }
+    $worst = $null
+    foreach ($window in @($provider.windows)) {
+      if (-not $worst -or $window.usedPercent -gt $worst.usedPercent) { $worst = $window }
+    }
+    if ($worst) {
+      $shortParts += ('{0}: {1} {2:0}%' -f $provider.label, (Get-WindowShortLabel $worst), [double] $worst.usedPercent)
+    }
+  }
+  $compact = $shortParts -join ' | '
+  if ($compact.Length -gt 63) { return $compact.Substring(0, 60) + '...' }
+  return $compact
 }
 
 function Read-Snapshot {
@@ -339,9 +360,10 @@ if ($PreviewPath) {
 function Start-Daemon {
   if ($script:Daemon -and -not $script:Daemon.HasExited) { return }
   $node = Get-Command node -ErrorAction SilentlyContinue
-  if (-not $node) { return }
+  $nodePath = if ($node) { $node.Source } elseif (Test-Path 'C:\Program Files\nodejs\node.exe') { 'C:\Program Files\nodejs\node.exe' } else { $null }
+  if (-not $nodePath) { return }
   $info = New-Object System.Diagnostics.ProcessStartInfo
-  $info.FileName = $node.Source
+  $info.FileName = $nodePath
   $info.Arguments = ('"{0}" {1}' -f $script:DaemonScript, $IntervalSeconds)
   $info.UseShellExecute = $false
   $info.CreateNoWindow = $true
@@ -354,6 +376,7 @@ $script:Form.ShowInTaskbar = $false
 $script:Form.TopMost = $true
 $script:Form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
 $script:Form.BackColor = $script:Colors.Background
+$script:Form.Opacity = [math]::Max(0.2, [math]::Min(1.0, $Opacity))
 $script:Form.Width = $script:Layout.Width
 $script:Form.Height = Get-PanelHeight
 $script:Form.GetType().GetProperty('DoubleBuffered', [System.Reflection.BindingFlags]'Instance, NonPublic').SetValue($script:Form, $true, $null)
@@ -396,7 +419,7 @@ $script:StartupItem.Add_Click({
     $shell = New-Object -ComObject WScript.Shell
     $link = $shell.CreateShortcut($script:StartupLink)
     $link.TargetPath = 'wscript.exe'
-    $link.Arguments = ('"{0}"' -f (Join-Path $PSScriptRoot 'tokenbar.vbs'))
+    $link.Arguments = ('\"{0}\"' -f (Join-Path $PSScriptRoot 'tokenbar.vbs'))
     $link.WorkingDirectory = $script:Root
     $link.Description = 'TokenBar'
     $link.Save()

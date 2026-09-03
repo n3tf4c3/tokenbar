@@ -38,9 +38,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     statusBar.text = '$(sync~spin) TokenBar';
     try {
       if (showProgress) {
-        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Atualizando cotas das assinaturas…' }, () => manager.refresh());
+        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Atualizando cotas das assinaturas…' }, () => manager.refresh({ force: true }));
       } else {
-        await manager.refresh();
+        await manager.refresh({ force: false });
       }
     } catch (error) {
       console.error('TokenBar: falha ao atualizar as cotas.', error);
@@ -55,7 +55,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       updateStatusBar();
     }),
     vscode.commands.registerCommand('tokenbar.openDashboard', async () => {
-      DashboardPanel.createOrShow(context.extensionUri, manager, refresh);
+      DashboardPanel.createOrShow(context.extensionUri, manager, () => refresh(true));
       if (!manager.getSnapshot().providers.length) {
         await refresh();
       }

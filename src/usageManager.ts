@@ -23,11 +23,11 @@ export class UsageManager {
     return { dispose: () => this.listeners.delete(listener) };
   }
 
-  public refresh(): Promise<UsageSnapshot> {
+  public refresh(options?: { force?: boolean }): Promise<UsageSnapshot> {
     if (this.refreshPromise) {
       return this.refreshPromise;
     }
-    this.refreshPromise = Promise.all(this.collectors.map(collector => collector.collect()))
+    this.refreshPromise = Promise.all(this.collectors.map(collector => collector.collect(options?.force)))
       .then(providers => {
         this.snapshot = { collectedAt: new Date().toISOString(), providers };
         for (const listener of this.listeners) {

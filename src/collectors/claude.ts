@@ -33,6 +33,7 @@ interface ClaudeCredentials {
   claudeAiOauth?: {
     accessToken?: string;
     subscriptionType?: string;
+    expiresAt?: number;
   };
 }
 
@@ -53,6 +54,32 @@ interface ClaudeUsageResponse {
   }>;
 }
 
+export function parseRetryAfter(headerValue?: string | string[]): number | undefined {
+  if (!headerValue) {
+    return undefined;
+  }
+  const value = (Array.isArray(headerValue) ? headerValue[0] : headerValue).trim();
+  if (!value) {
+    return undefined;
+  }
+  const num = Number(value);
+  if (Number.isFinite(num)) {
+    if (num > 1e9) {
+      // Timestamp epoch em segundos
+      return num * 1000;
+    }
+    // Delay em segundos relativo ao momento atual (limitado a no máximo 1 hora)
+    const delaySeconds = Math.max(1, Math.min(3600, num));
+    return Date.now() + delaySeconds * 1000;
+  }
+  const parsedDate = Date.parse(value);
+  if (Number.isFinite(parsedDate) && parsedDate > Date.now()) {
+    // Limitado a no máximo 1 hora no futuro
+    return Math.min(parsedDate, Date.now() + 3600 * 1000);
+  }
+  return undefined;
+}
+
 export class ClaudeCollector implements UsageCollector {
   public readonly provider = 'claude' as const;
   private lastSnapshot?: ProviderSnapshot;
@@ -66,19 +93,23 @@ export class ClaudeCollector implements UsageCollector {
     this.lastAttemptAt = Number.isFinite(collectedAt) ? collectedAt : 0;
   }
 
-  public async collect(): Promise<ProviderSnapshot> {
-    const reason = claudeThrottleReason(Date.now(), this.lastAttemptAt, this.backoffUntil);
-    if (reason === 'backoff') {
-      return this.throttled(
-        'O Claude limitou novas consultas. Exibindo o último dado válido até a próxima tentativa.',
-        'Limite temporário de consultas do Claude. Tente novamente em alguns minutos.'
-      );
-    }
-    if (reason === 'floor') {
-      return this.throttled(
-        'Exibindo o último dado válido; o Claude será consultado novamente em alguns minutos.',
-        'Aguardando o intervalo mínimo de 5 minutos entre consultas ao Claude.'
-      );
+  public async collect(force = false): Promise<ProviderSnapshot> {
+    if (force) {
+      this.backoffUntil = 0;
+    } else {
+      const reason = claudeThrottleReason(Date.now(), this.lastAttemptAt, this.backoffUntil);
+      if (reason === 'backoff') {
+        return this.throttled(
+          'O Claude limitou novas consultas. Exibindo o último dado válido até a próxima tentativa.',
+          'Limite temporário de consultas do Claude. Tente novamente em alguns minutos.'
+        );
+      }
+      if (reason === 'floor') {
+        return this.throttled(
+          'Exibindo o último dado válido; o Claude será consultado novamente em alguns minutos.',
+          'Aguardando o intervalo mínimo de 5 minutos entre consultas ao Claude.'
+        );
+      }
     }
 
     const credentialsPath = path.join(os.homedir(), '.claude', '.credentials.json');
@@ -87,12 +118,29 @@ export class ClaudeCollector implements UsageCollector {
     try {
       credentials = JSON.parse(await fs.promises.readFile(credentialsPath, 'utf8'));
     } catch {
-      return unavailable(this.provider, 'Claude', 'Claude Code OAuth', 'Faça login no Claude Code para ler a cota da assinatura.');
+      this.lastFailure = { message: 'Faça login no Claude Code para ler a cota da assinatura.', status: 'unavailable' };
+      if (this.lastSnapshot) {
+        return this.cachedSnapshot(this.lastFailure.message);
+      }
+      return unavailable(this.provider, 'Claude', 'Claude Code OAuth', this.lastFailure.message);
     }
 
     const accessToken = credentials.claudeAiOauth?.accessToken;
     if (!accessToken) {
-      return unavailable(this.provider, 'Claude', 'Claude Code OAuth', 'A sessão local do Claude Code não foi encontrada.');
+      this.lastFailure = { message: 'A sessão local do Claude Code não foi encontrada.', status: 'unavailable' };
+      if (this.lastSnapshot) {
+        return this.cachedSnapshot(this.lastFailure.message);
+      }
+      return unavailable(this.provider, 'Claude', 'Claude Code OAuth', this.lastFailure.message);
+    }
+
+    const expiresAt = credentials.claudeAiOauth?.expiresAt;
+    if (typeof expiresAt === 'number' && Number.isFinite(expiresAt) && expiresAt < Date.now()) {
+      this.lastFailure = { message: 'A sessão do Claude Code expirou. Abra o Claude Code para renovar.', status: 'unavailable' };
+      if (this.lastSnapshot) {
+        return this.cachedSnapshot(this.lastFailure.message);
+      }
+      return unavailable(this.provider, 'Claude', 'Claude Code OAuth', this.lastFailure.message);
     }
 
     try {
@@ -151,17 +199,17 @@ export class ClaudeCollector implements UsageCollector {
       return snapshot;
     } catch (error) {
       if (error instanceof ClaudeHttpError && error.statusCode === 429) {
-        this.backoffUntil = error.retryAt ?? Date.now() + 10 * 60 * 1000;
+        this.backoffUntil = error.retryAt ?? (Date.now() + 5 * 60 * 1000);
         this.lastFailure = { message: 'Limite temporário de consultas do Claude. Tente novamente em alguns minutos.', status: 'unavailable' };
         if (this.lastSnapshot) {
-          return this.cachedSnapshot('O Claude limitou temporariamente as consultas. Exibindo o último dado válido.');
+          return this.cachedSnapshot(this.lastFailure.message);
         }
         return unavailable(this.provider, 'Claude', 'Claude Code OAuth', this.lastFailure.message);
       }
       const message = error instanceof Error ? error.message : String(error);
-      this.lastFailure = { message, status: 'error' };
+      this.lastFailure = { message: `Não foi possível atualizar o Claude: ${message}`, status: 'error' };
       if (this.lastSnapshot) {
-        return this.cachedSnapshot(`Não foi possível atualizar o Claude: ${message}`);
+        return this.cachedSnapshot(this.lastFailure.message);
       }
       return unavailable(this.provider, 'Claude', 'Claude Code OAuth', message, 'error');
     }
@@ -173,7 +221,7 @@ export class ClaudeCollector implements UsageCollector {
    */
   private throttled(cachedMessage: string, emptyMessage: string): ProviderSnapshot {
     if (this.lastSnapshot) {
-      return this.cachedSnapshot(cachedMessage);
+      return this.cachedSnapshot(this.lastFailure?.message ?? cachedMessage);
     }
     return unavailable(
       this.provider,
@@ -214,9 +262,16 @@ export class ClaudeCollector implements UsageCollector {
           const body = Buffer.concat(chunks).toString('utf8');
           if ((response.statusCode ?? 500) >= 300) {
             const status = response.statusCode ?? 500;
-            const retryAfter = Number(response.headers['retry-after']);
-            const retryAt = Number.isFinite(retryAfter) ? Date.now() + retryAfter * 1000 : undefined;
-            reject(new ClaudeHttpError(status, status === 401 ? 'A sessão do Claude expirou; entre novamente no Claude Code.' : `Claude respondeu HTTP ${status}.`, retryAt));
+            const retryAt = parseRetryAfter(response.headers['retry-after']);
+            reject(new ClaudeHttpError(
+              status,
+              status === 401
+                ? 'A sessão do Claude expirou; entre novamente no Claude Code.'
+                : status === 429
+                ? 'Limite de consultas atingido no Claude (HTTP 429).'
+                : `Claude respondeu HTTP ${status}.`,
+              retryAt
+            ));
             return;
           }
           try {

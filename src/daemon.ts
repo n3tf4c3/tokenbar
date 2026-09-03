@@ -67,8 +67,8 @@ function flushSnapshot(): void {
 const manager = new UsageManager(readCachedSnapshot());
 manager.onDidUpdate(writeSnapshot);
 
-function refresh(): void {
-  manager.refresh().catch(error => console.error('TokenBar: falha ao coletar as cotas.', error));
+function refresh(options?: { force?: boolean }): void {
+  manager.refresh(options).catch(error => console.error('TokenBar: falha ao coletar as cotas.', error));
 }
 
 fs.watch(stateDir, (_event, filename) => {
@@ -81,7 +81,7 @@ fs.watch(stateDir, (_event, filename) => {
     console.error('TokenBar: falha ao consumir o pedido de atualização.', error);
     return;
   }
-  refresh();
+  refresh({ force: true });
 });
 
 // Último recurso: o daemon é um processo de vida longa, então uma promise solta não pode
@@ -89,4 +89,4 @@ fs.watch(stateDir, (_event, filename) => {
 process.on('unhandledRejection', error => console.error('TokenBar: falha não tratada.', error));
 
 refresh();
-setInterval(refresh, intervalSeconds * 1000);
+setInterval(() => refresh(), intervalSeconds * 1000);
