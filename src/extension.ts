@@ -1,12 +1,15 @@
 import * as vscode from 'vscode';
 import { DashboardPanel } from './webview/dashboard';
-import { UsageSnapshot } from './usage';
+import { formatAge, isProviderOutdated, isWindowExpired, providerNeedsAttention, UsageSnapshot, worstCurrentUsage } from './usage';
+import { createDiagnosticLogger } from './diagnostics';
 import { UsageManager } from './usageManager';
 
 let refreshTimer: NodeJS.Timeout | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  const manager = new UsageManager(context.globalState.get<UsageSnapshot>('tokenbar.lastSnapshot'));
+  const manager = new UsageManager(context.globalState.get<UsageSnapshot>('tokenbar.lastSnapshot'), {
+    onDiagnostic: createDiagnosticLogger(context.globalStorageUri.fsPath)
+  });
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBar.command = 'tokenbar.openDashboard';
   statusBar.text = '$(pulse) TokenBar…';
@@ -15,20 +18,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const updateStatusBar = () => {
     const snapshot = manager.getSnapshot();
-    const providers = snapshot.providers.filter(provider => provider.status === 'ok' && provider.windows.length);
-    if (!providers.length) {
-      statusBar.text = '$(warning) TokenBar';
-      statusBar.tooltip = 'Nenhuma cota disponível. Clique para ver o diagnóstico.';
-      return;
-    }
-    const mostUrgent = providers
-      .flatMap(provider => provider.windows.map(window => ({ provider: provider.label, used: window.usedPercent })))
-      .sort((a, b) => b.used - a.used)[0];
-    statusBar.text = `$(pulse) ${mostUrgent.provider} ${mostUrgent.used.toFixed(0)}%`;
-    statusBar.tooltip = new vscode.MarkdownString(providers.map(provider => {
-      const lines = provider.windows.map(window => `- ${window.label}: **${window.usedPercent.toFixed(0)}% usado**`);
-      return `### ${provider.label}\n${lines.join('\n')}`;
-    }).join('\n\n'));
+    const worst = worstCurrentUsage(snapshot);
+    const attention = snapshot.providers.some(provider => providerNeedsAttention(provider));
+    statusBar.text = worst ? `${attention ? '$(warning)' : '$(pulse)'} ${worst.provider.label} ${worst.window.usedPercent.toFixed(0)}%` : '$(warning) TokenBar';
+    // Texto simples: rótulos e diagnósticos externos não são interpretados como Markdown.
+    statusBar.tooltip = snapshot.providers.map(provider => {
+      const lines = provider.windows.map(window => `${window.label}: ${window.usedPercent.toFixed(0)}%${isProviderOutdated(provider) || isWindowExpired(window) ? ' (último dado)' : ' usado'}`);
+      const collected = provider.windows.length ? `Última coleta ${formatAge(provider.collectedAt)}` : 'Sem coleta válida';
+      const retry = provider.nextRetryAt ? `Próxima tentativa: ${new Date(provider.nextRetryAt).toLocaleTimeString('pt-BR')}` : '';
+      return [provider.label, provider.message, collected, ...lines, retry].filter(Boolean).join('\n');
+    }).join('\n\n') || 'Nenhuma cota disponível. Clique para ver o diagnóstico.';
   };
 
   // Nunca propaga: falhar aqui abortaria a ativação da extensão, e no agendamento viraria
@@ -67,6 +66,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     })
   );
+
+  const ageTimer = setInterval(updateStatusBar, 30_000);
+  context.subscriptions.push({ dispose: () => clearInterval(ageTimer) });
 
   scheduleRefresh(refresh);
   await refresh();

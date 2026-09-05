@@ -103,6 +103,15 @@ wscript tray\tokenbar.vbs
 > `/usage` do Claude Code. As faixas de cor também são as mesmas — verde abaixo de 70%,
 > âmbar a partir de 70%, vermelho a partir de 90%.
 
+Cada provedor mostra a **última coleta válida**, a idade do dado e a próxima tentativa.
+Falhas e sessão expirada continuam visíveis mesmo com cache. Na bandeja, `!` indica
+atenção e percentuais com `*` são valores anteriores. Janelas vencidas ficam sem
+preenchimento até uma nova coleta, sem presumir 0%. Dados sem coleta há 10 minutos também
+recebem aviso, mesmo se o daemon deixar de publicar.
+
+Se aparecer **renovar sessão**, abra o Claude Code e use `/login`. O TokenBar volta a ler
+as credenciais nos ciclos seguintes, sem modificar o arquivo de login.
+
 ## Como os dados são obtidos
 
 ### Claude
@@ -118,12 +127,18 @@ Resiliência:
 
 - **Piso de 5 minutos** entre chamadas de rede — coletas mais frequentes devolvem o último
   dado válido, marcado como `stale`, ou o último diagnóstico se ainda não houver dado.
-- **Backoff em HTTP 429**, respeitando o header `Retry-After` quando presente, ou 10
-  minutos por padrão.
+- **Backoff em HTTP 429**, respeitando integralmente o header `Retry-After` quando presente,
+  ou 5 minutos por padrão. A próxima tentativa é persistida, inclusive sem cache, e
+  sobrevive a reinícios.
 
 As duas guardas valem desde a primeira coleta, inclusive numa instalação que ainda não
-consultou o serviço com sucesso.
-- **Timeout de 10 s**.
+consultou o serviço com sucesso. "Atualizar agora" também respeita as duas guardas.
+- **Prazo total de 10 s**, incluindo conexão e corpo inteiro. Respostas interrompidas
+  são encerradas e tentadas novamente no próximo ciclo permitido.
+- **Isolamento por provedor**: cada resultado é publicado assim que chega. Um prazo de
+  15 s no gerenciador cancela coletores pendurados e permite a próxima atualização.
+- **Validação**: percentuais ausentes/inválidos e datas inválidas geram diagnóstico;
+  o último dado válido é preservado.
 - Um `401` é traduzido em "a sessão do Claude expirou; entre novamente no Claude Code".
 
 > ⚠️ **Endpoint não documentado.** `/api/oauth/usage` não faz parte da API pública da
@@ -155,6 +170,11 @@ Timeout de 12 s. Se o CLI não existir, o provedor aparece como indisponível �
 - O snapshot fica em `%LOCALAPPDATA%\tokenbar\snapshot.json`, com as permissões padrão do
   perfil do usuário.
 
+Os diagnósticos ficam em `%LOCALAPPDATA%\tokenbar\diagnostics.jsonl`; a extensão usa
+seu diretório `globalStorage`. Há dois arquivos de até 256 KiB cada, com rotação automática.
+Eles registram estado, duração e horários de coleta/tentativa, sem tokens, mensagens
+remotas, headers ou corpos de resposta.
+
 Detalhes completos, incluindo superfície de ataque e como reportar vulnerabilidades, em
 [SECURITY.md](SECURITY.md).
 
@@ -163,7 +183,8 @@ Detalhes completos, incluindo superfície de ataque e como reportar vulnerabilid
 ```powershell
 npm install
 npm run compile      # extensão + daemon
-npm test             # suíte mínima de unidades
+npm test             # unidades e regressões de coleta
+npm run test:tray     # testes Windows, sem abrir a GUI
 ```
 
 Pressione `F5` no VS Code para abrir uma janela de desenvolvimento da extensão.

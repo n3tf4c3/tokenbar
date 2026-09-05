@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import { UsageSnapshot } from '../usage';
 import { UsageManager } from '../usageManager';
 import { renderDashboard } from './render';
 
@@ -36,6 +35,8 @@ export class DashboardPanel {
       }
     }, null, this.disposables);
     this.disposables.push(manager.onDidUpdate(() => this.update()) as vscode.Disposable);
+    const ageTimer = setInterval(() => this.update(), 30_000);
+    this.disposables.push({ dispose: () => clearInterval(ageTimer) });
   }
 
   private update(): void {

@@ -102,7 +102,15 @@ Essas não são preferência estética; quebrá-las quebra o comportamento do ap
 falhar. Adicione casos ali para qualquer lógica pura que você tocar (rotulagem de janelas,
 normalização de percentual, formatação de duração).
 
-Rode `npm test` antes de abrir o PR. O CI roda o mesmo comando.
+Rode `npm test` e, no Windows, `npm run test:tray` antes de abrir o PR. O CI executa a
+suíte em Linux e Windows e os testes PowerShell no Windows.
+
+`src/test/regressions.ts` cobre falhas, cancelamento, recuperação, persistência de 429 e
+validação. Os testes usam credenciais sintéticas e HTTP em loopback, sem consultar contas
+reais. `src/test/tray.test.ps1` importa `tray/state.ps1` sem iniciar a GUI nem o daemon.
+
+Para conferir a apresentação de cenários sintéticos:
+`tray\tokenbar.ps1 -PreviewPath saida.png -SnapshotFile exemplo.json`.
 
 ## Pull requests
 

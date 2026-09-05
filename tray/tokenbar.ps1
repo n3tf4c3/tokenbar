@@ -7,7 +7,8 @@
 param(
   [int] $IntervalSeconds = 60,
   [double] $Opacity = 0.92,
-  [string] $PreviewPath
+  [string] $PreviewPath,
+  [string] $SnapshotFile
 )
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -18,16 +19,19 @@ public static extern bool DestroyIcon(IntPtr handle);
 '@
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'state.ps1')
 $script:Root = Split-Path -Parent $PSScriptRoot
 $script:DaemonScript = Join-Path $script:Root 'dist\daemon.js'
 $script:StateDir = Join-Path $env:LOCALAPPDATA 'tokenbar'
 $script:SnapshotPath = Join-Path $script:StateDir 'snapshot.json'
+if ($PreviewPath -and $SnapshotFile) { $script:SnapshotPath = $SnapshotFile }
 $script:RefreshFlagPath = Join-Path $script:StateDir 'refresh.flag'
 $script:StartupLink = Join-Path ([Environment]::GetFolderPath('Startup')) 'TokenBar.lnk'
 $script:Snapshot = $null
 $script:SnapshotStamp = [datetime]::MinValue
 $script:Daemon = $null
 $script:CurrentIconHandle = [IntPtr]::Zero
+$script:LastRender = [datetime]::MinValue
 
 $script:Colors = @{
   Background = [System.Drawing.Color]::FromArgb(17, 21, 29)
@@ -50,15 +54,17 @@ $script:Fonts = @{
 }
 
 $script:Layout = @{
-  Width       = 372
+  Width       = 430
   Pad         = 14
   HeaderH     = 30
   ProviderH   = 24
-  RowH        = 24
+  RowH        = 26
+  InfoH       = 18
+  NoticeH     = 40
   ProviderGap = 10
-  LabelW      = 56
-  BarW        = 96
-  ValueW      = 42
+  LabelW      = 64
+  BarW        = 110
+  ValueW      = 58
 }
 
 function Get-Tone {
@@ -68,37 +74,7 @@ function Get-Tone {
   return $script:Colors.Green
 }
 
-function Get-WindowShortLabel {
-  param($Window)
-  if ($Window.durationMinutes) {
-    $minutes = [int] $Window.durationMinutes
-    if ($minutes -eq 300) { return '5h' }
-    if ($minutes -eq 10080) { return 'sem' }
-    if ($minutes % 1440 -eq 0) { return "$($minutes / 1440)d" }
-    if ($minutes % 60 -eq 0) { return "$($minutes / 60)h" }
-    return "${minutes}m"
-  }
-  if ($Window.id -eq 'five_hour') { return '5h' }
-  if ($Window.id -eq 'seven_day') { return 'sem' }
-  if ($Window.id -like 'weekly_*') {
-    $model = $Window.label -replace ('^.*' + [char] 0x00B7 + '\s*'), ''
-    if ($model -and $model -ne $Window.label) { return "sem $model" }
-    return 'sem'
-  }
-  return '-'
-}
 
-function Get-Countdown {
-  param([string] $ResetsAt)
-  if (-not $ResetsAt) { return '' }
-  $target = Get-Date
-  if (-not [datetime]::TryParse($ResetsAt, [ref] $target)) { return '' }
-  $span = $target.ToUniversalTime() - [datetime]::UtcNow
-  if ($span.TotalSeconds -le 0) { return 'renovando' }
-  if ($span.TotalDays -ge 1) { return ('renova em {0}d {1}h' -f [int] $span.TotalDays, $span.Hours) }
-  if ($span.TotalHours -ge 1) { return ('renova em {0}h {1}m' -f [int] $span.TotalHours, $span.Minutes) }
-  return ('renova em {0}m' -f [math]::Max(1, [int] $span.TotalMinutes))
-}
 
 function Get-RoundedPath {
   param([System.Drawing.RectangleF] $Rect, [float] $Radius)
@@ -116,33 +92,20 @@ function Get-RoundedPath {
   return $path
 }
 
-function Get-VisibleProviders {
-  if (-not $script:Snapshot) { return @() }
-  return @($script:Snapshot.providers)
-}
 
 function Get-PanelHeight {
-  $providers = Get-VisibleProviders
+  $providers = @(Get-VisibleProviders)
   $height = $script:Layout.Pad + $script:Layout.HeaderH + $script:Layout.Pad
   if (-not $providers.Count) { return $height + $script:Layout.RowH }
   foreach ($provider in $providers) {
-    $rows = 1
-    if ($provider.status -eq 'ok' -and $provider.windows) { $rows = @($provider.windows).Count }
+    $rows = @($provider.windows).Count
     $height += $script:Layout.ProviderH + ($rows * $script:Layout.RowH) + $script:Layout.ProviderGap
+    $height += @(Get-ProviderInfo $provider).Count * $script:Layout.InfoH
+    if (Get-ProviderNotice $provider) { $height += $script:Layout.NoticeH }
   }
   return $height
 }
 
-function Get-WorstUsage {
-  $worst = $null
-  foreach ($provider in (Get-VisibleProviders)) {
-    if ($provider.status -ne 'ok') { continue }
-    foreach ($window in @($provider.windows)) {
-      if (-not $worst -or $window.usedPercent -gt $worst.usedPercent) { $worst = $window }
-    }
-  }
-  return $worst
-}
 
 function Write-Panel {
   param([System.Drawing.Graphics] $Graphics, [int] $Width, [int] $Height)
@@ -153,6 +116,7 @@ function Write-Panel {
 
   $textBrush = New-Object System.Drawing.SolidBrush $script:Colors.Text
   $mutedBrush = New-Object System.Drawing.SolidBrush $script:Colors.Muted
+  $noticeBrush = New-Object System.Drawing.SolidBrush $script:Colors.Amber
   $trackBrush = New-Object System.Drawing.SolidBrush $script:Colors.Track
   $borderPen = New-Object System.Drawing.Pen $script:Colors.Border
 
@@ -166,43 +130,45 @@ function Write-Panel {
   if ($script:Snapshot) {
     $collected = Get-Date
     if ([datetime]::TryParse($script:Snapshot.collectedAt, [ref] $collected)) {
-      $stampText = $collected.ToLocalTime().ToString('HH:mm')
+      $stampText = 'painel ' + $collected.ToLocalTime().ToString('HH:mm')
     }
   }
   $stampSize = $Graphics.MeasureString($stampText, $script:Fonts.Small)
   $Graphics.DrawString($stampText, $script:Fonts.Small, $mutedBrush, [float] ($Width - $pad - $stampSize.Width), [float] ($y + 4))
   $y += $script:Layout.HeaderH
 
-  $providers = Get-VisibleProviders
+  $providers = @(Get-VisibleProviders)
   if (-not $providers.Count) {
     $Graphics.DrawString('Aguardando o primeiro snapshot do daemon...', $script:Fonts.Body, $mutedBrush, [float] $pad, [float] $y)
   }
 
   foreach ($provider in $providers) {
     $Graphics.DrawString([string] $provider.label, $script:Fonts.Provider, $textBrush, [float] $pad, [float] $y)
-    $tag = ''
-    if ($provider.plan) { $tag = [string] $provider.plan }
-    if ($provider.stale) {
-      if ($tag) { $tag = $tag + ' ' + [char] 0x00B7 + ' cache' } else { $tag = 'cache' }
-    }
+    $tag = Get-ProviderState $provider
+    if ($provider.plan) { $tag = [string] $provider.plan + ' ' + [char] 0x00B7 + ' ' + $tag }
     if ($tag) {
       $tagSize = $Graphics.MeasureString($tag, $script:Fonts.Small)
-      $Graphics.DrawString($tag, $script:Fonts.Small, $mutedBrush, [float] ($Width - $pad - $tagSize.Width), [float] ($y + 3))
+      $tagBrush = if (Test-ProviderAttention $provider) { $noticeBrush } else { $mutedBrush }
+      $Graphics.DrawString($tag, $script:Fonts.Small, $tagBrush, [float] ($Width - $pad - $tagSize.Width), [float] ($y + 3))
     }
     $y += $script:Layout.ProviderH
 
-    if ($provider.status -ne 'ok' -or -not $provider.windows) {
-      $message = [string] $provider.message
-      if (-not $message) { $message = 'Sem janelas retornadas.' }
-      $rect = New-Object System.Drawing.RectangleF([float] $pad, [float] $y, [float] ($Width - (2 * $pad)), [float] $script:Layout.RowH)
-      $Graphics.DrawString($message, $script:Fonts.Small, $mutedBrush, $rect)
-      $y += $script:Layout.RowH + $script:Layout.ProviderGap
-      continue
+    foreach ($info in @(Get-ProviderInfo $provider)) {
+      $Graphics.DrawString([string] $info, $script:Fonts.Small, $mutedBrush, [float] $pad, [float] $y)
+      $y += $script:Layout.InfoH
+    }
+    $notice = Get-ProviderNotice $provider
+    if ($notice) {
+      $rect = New-Object System.Drawing.RectangleF([float] $pad, [float] $y, [float] ($Width - (2 * $pad)), [float] $script:Layout.NoticeH)
+      $Graphics.DrawString($notice, $script:Fonts.Small, $noticeBrush, $rect)
+      $y += $script:Layout.NoticeH
     }
 
     foreach ($window in @($provider.windows)) {
       $used = [double] $window.usedPercent
-      $tone = Get-Tone $used
+      $expired = Test-WindowExpired $window
+      $old = (Test-ProviderOutdated $provider) -or $expired
+      $tone = if ($old) { $script:Colors.Muted } else { Get-Tone $used }
       $toneBrush = New-Object System.Drawing.SolidBrush $tone
 
       $Graphics.DrawString((Get-WindowShortLabel $window), $script:Fonts.Body, $mutedBrush, [float] $pad, [float] ($y + 4))
@@ -214,14 +180,18 @@ function Write-Panel {
       $Graphics.FillPath($trackBrush, $trackPath)
       $trackPath.Dispose()
 
-      $fillWidth = [math]::Max(3, ($script:Layout.BarW * [math]::Min(100, [math]::Max(0, $used)) / 100))
-      $fillRect = New-Object System.Drawing.RectangleF([float] $barX, [float] $barY, [float] $fillWidth, 6)
-      $fillPath = Get-RoundedPath $fillRect 3
-      $Graphics.FillPath($toneBrush, $fillPath)
-      $fillPath.Dispose()
+      if (-not $expired -and $used -gt 0) {
+        $fillWidth = [math]::Max(3, ($script:Layout.BarW * [math]::Min(100, [math]::Max(0, $used)) / 100))
+        $fillRect = New-Object System.Drawing.RectangleF([float] $barX, [float] $barY, [float] $fillWidth, 6)
+        $fillPath = Get-RoundedPath $fillRect 3
+        $Graphics.FillPath($toneBrush, $fillPath)
+        $fillPath.Dispose()
+      }
 
       $valueX = $barX + $script:Layout.BarW + 10
-      $Graphics.DrawString(('{0:0}%' -f $used), $script:Fonts.Value, $toneBrush, [float] $valueX, [float] ($y + 3))
+      $valueText = '{0:0}%' -f $used
+      if ($old) { $valueText += '*' }
+      $Graphics.DrawString($valueText, $script:Fonts.Value, $toneBrush, [float] $valueX, [float] ($y + 3))
 
       $resetText = Get-Countdown ([string] $window.resetsAt)
       if ($resetText) {
@@ -235,6 +205,7 @@ function Write-Panel {
 
   $textBrush.Dispose()
   $mutedBrush.Dispose()
+  $noticeBrush.Dispose()
   $trackBrush.Dispose()
   $borderPen.Dispose()
 }
@@ -247,7 +218,11 @@ function New-TrayIcon {
   $graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAlias
   $graphics.Clear([System.Drawing.Color]::Transparent)
 
-  if ($worst) {
+  $attention = @((Get-VisibleProviders) | Where-Object { Test-ProviderAttention $_ }).Count -gt 0
+  if ($attention) {
+    $tone = $script:Colors.Amber
+    $text = '!'
+  } elseif ($worst) {
     $tone = Get-Tone ([double] $worst.usedPercent)
     $text = '{0:0}' -f [double] $worst.usedPercent
   } else {
@@ -280,44 +255,6 @@ function New-TrayIcon {
   return $handle
 }
 
-function Get-TooltipText {
-  $providers = Get-VisibleProviders
-  if (-not $providers.Count) { return 'TokenBar - sem dados' }
-
-  $parts = @()
-  foreach ($provider in $providers) {
-    if ($provider.status -ne 'ok') {
-      $parts += ('{0}: indisponivel' -f $provider.label)
-      continue
-    }
-    $values = @()
-    foreach ($window in @($provider.windows)) {
-      $values += ('{0} {1:0}%' -f (Get-WindowShortLabel $window), [double] $window.usedPercent)
-    }
-    $parts += ('{0}: {1}' -f $provider.label, ($values -join ' '))
-  }
-  $full = $parts -join ' | '
-  if ($full.Length -le 63) { return $full }
-
-  # Compact fallback: exibe a janela mais critica de cada provedor
-  $shortParts = @()
-  foreach ($provider in $providers) {
-    if ($provider.status -ne 'ok') {
-      $shortParts += ('{0}: indisponivel' -f $provider.label)
-      continue
-    }
-    $worst = $null
-    foreach ($window in @($provider.windows)) {
-      if (-not $worst -or $window.usedPercent -gt $worst.usedPercent) { $worst = $window }
-    }
-    if ($worst) {
-      $shortParts += ('{0}: {1} {2:0}%' -f $provider.label, (Get-WindowShortLabel $worst), [double] $worst.usedPercent)
-    }
-  }
-  $compact = $shortParts -join ' | '
-  if ($compact.Length -gt 63) { return $compact.Substring(0, 60) + '...' }
-  return $compact
-}
 
 function Read-Snapshot {
   if (-not (Test-Path $script:SnapshotPath)) { return $false }
@@ -400,7 +337,11 @@ function Update-Tray {
   $script:CurrentIconHandle = $handle
   if ($previous -ne [IntPtr]::Zero) { [void] [TokenBar.Native]::DestroyIcon($previous) }
   $script:Notify.Text = Get-TooltipText
-  if ($script:Form.Visible) { $script:Form.Invalidate() }
+  $script:LastRender = [datetime]::UtcNow
+  if ($script:Form.Visible) {
+    $script:Form.Height = Get-PanelHeight
+    $script:Form.Invalidate()
+  }
 }
 
 $script:Menu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -442,7 +383,7 @@ $script:Timer = New-Object System.Windows.Forms.Timer
 $script:Timer.Interval = 3000
 $script:Timer.Add_Tick({
   Start-Daemon
-  if ((Read-Snapshot) -or $script:Form.Visible) { Update-Tray }
+  if ((Read-Snapshot) -or $script:Form.Visible -or ([datetime]::UtcNow - $script:LastRender).TotalSeconds -ge 30) { Update-Tray }
 })
 
 Start-Daemon

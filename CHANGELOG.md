@@ -7,6 +7,19 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não publicado]
 
+### Confiabilidade das cotas
+
+- Corrige os cinco achados de 05/09: avisos ocultos pelo cache, resposta HTTP pendurada,
+  atualização manual ignorando 429, percentual inválido convertido em zero e contagem
+  de tempo arredondada.
+- Mostra última coleta e próxima tentativa por provedor. Janelas vencidas não preenchem
+  barras nem determinam o maior uso; falhas permanecem visíveis junto dos valores anteriores.
+- Persiste o intervalo e a espera de 429, inclusive sem uma primeira coleta válida.
+- Cancela HTTP após um prazo total de 10 s e coletores após 15 s, publicando cada provedor
+  independentemente. Preserva os últimos valores válidos em falhas.
+- Adiciona diagnóstico local com rotação e sem credenciais, testes de regressão com
+  HTTP em loopback e testes da bandeja no CI Windows.
+
 ### Adicionado
 
 - Documentação do projeto: `README.md` expandido, `docs/arquitetura.md`, `SECURITY.md`,

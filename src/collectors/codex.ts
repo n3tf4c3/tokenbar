@@ -2,7 +2,7 @@ import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { clampPercent, ProviderSnapshot, unavailable, UsageCollector, UsageWindow } from '../usage';
+import { clampPercent, CollectionError, ProviderSnapshot, unavailable, UsageCollector, UsageWindow } from '../usage';
 import { VERSION } from '../version';
 
 interface RateLimitWindow {
@@ -27,9 +27,9 @@ interface RateLimitResponse {
 export class CodexCollector implements UsageCollector {
   public readonly provider = 'codex' as const;
 
-  public async collect(_force = false): Promise<ProviderSnapshot> {
+  public async collect(_force = false, signal?: AbortSignal): Promise<ProviderSnapshot> {
     try {
-      const result = await this.readRateLimits();
+      const result = await this.readRateLimits(signal);
       const mainSnapshot = result.rateLimits ?? result.rateLimitsByLimitId?.codex;
       const snapshots = mainSnapshot
         ? [mainSnapshot]
@@ -57,7 +57,8 @@ export class CodexCollector implements UsageCollector {
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return unavailable(this.provider, 'Codex', 'Codex app-server', message, 'error');
+      return { ...unavailable(this.provider, 'Codex', 'Codex app-server', message, 'error'),
+        failureKind: error instanceof CollectionError ? error.kind : 'network' };
     }
   }
 
@@ -66,13 +67,20 @@ export class CodexCollector implements UsageCollector {
       return;
     }
     const duration = window.windowDurationMins ?? undefined;
+    if (duration !== undefined && (!Number.isSafeInteger(duration) || duration <= 0)) {
+      throw new CollectionError('O Codex retornou uma duração de janela inválida.', 'invalid-response');
+    }
+    if (window.resetsAt != null && (typeof window.resetsAt !== 'number' || !Number.isFinite(window.resetsAt)
+      || !Number.isFinite(new Date(window.resetsAt * 1000).getTime()))) {
+      throw new CollectionError('O Codex retornou um horário de renovação inválido.', 'invalid-response');
+    }
     const durationLabel = duration === 300 ? 'Janela de 5 horas' : duration === 10_080 ? 'Janela semanal' : duration ? `Janela de ${this.formatDuration(duration)}` : 'Limite da assinatura';
     target.push({
       id: `${snapshot.limitId ?? 'codex'}_${position}`,
       label: snapshot.limitName ? `${durationLabel} · ${snapshot.limitName}` : durationLabel,
       usedPercent: clampPercent(window.usedPercent),
       durationMinutes: duration,
-      resetsAt: window.resetsAt ? new Date(window.resetsAt * 1000).toISOString() : undefined
+      resetsAt: window.resetsAt != null ? new Date(window.resetsAt * 1000).toISOString() : undefined
     });
   }
 
@@ -86,8 +94,9 @@ export class CodexCollector implements UsageCollector {
     return `${minutes} minutos`;
   }
 
-  private readRateLimits(): Promise<RateLimitResponse> {
+  private readRateLimits(signal?: AbortSignal): Promise<RateLimitResponse> {
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) { reject(new CollectionError('A consulta do Codex foi cancelada.', 'timeout')); return; }
       let child: ChildProcessWithoutNullStreams;
       try {
         child = this.spawnCodex();
@@ -104,11 +113,16 @@ export class CodexCollector implements UsageCollector {
         }
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
         child.stdin.end();
         setTimeout(() => child.kill(), 250);
         error ? reject(error) : resolve(value!);
       };
-      const timer = setTimeout(() => finish(new Error('Tempo esgotado ao consultar o Codex.')), 12_000);
+      const abort = () => finish(new CollectionError('A consulta do Codex foi cancelada.', 'timeout'));
+      const timer = setTimeout(() => finish(new CollectionError('Tempo esgotado ao consultar o Codex.', 'timeout')), 12_000);
+      signal?.addEventListener('abort', abort, { once: true });
+      child.stdin.on('error', () => finish(new CollectionError('A comunicação com o Codex foi interrompida.', 'network')));
+      child.stderr.resume();
 
       child.stdout.on('data', chunk => {
         buffer += chunk.toString('utf8');

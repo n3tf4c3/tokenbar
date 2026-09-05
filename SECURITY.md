@@ -51,6 +51,11 @@ renovação, rótulos de janela, nome do plano (ex.: `max`) e mensagens de diagn
 gravado com as permissões padrão do perfil do usuário — ou seja, legível por processos que
 já rodam com a sua conta. Trate o nome do plano como a informação mais sensível ali.
 
+O diagnóstico local usa `diagnostics.jsonl` e `diagnostics.previous.jsonl`, cada um com
+até 256 KiB. A extensão grava no seu `globalStorage`. Uma lista explícita de campos limita
+o conteúdo a estado, categoria da falha, duração e horários. Headers, corpos de resposta,
+mensagens remotas e credenciais não são registrados. Não há envio de logs pela rede.
+
 ## Endpoint não documentado (leia antes de usar)
 
 `GET /api/oauth/usage` **não é uma API pública da Anthropic**. É o mesmo endpoint que o
