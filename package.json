@@ -53,6 +53,7 @@
     "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --watch",
     "compile-tests": "esbuild src/test/test.ts --bundle --platform=node --outfile=dist/test.js",
     "test": "npm run compile-tests && node dist/test.js",
+    "test:tray": "powershell -NoProfile -ExecutionPolicy Bypass -File src/test/tray.test.ps1",
     "package": "vsce package --no-dependencies --out tokenbar.vsix",
     "compile-daemon": "esbuild src/daemon.ts --bundle --outfile=dist/daemon.js --format=cjs --platform=node",
     "compile-extension": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",

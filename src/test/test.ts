@@ -5,6 +5,7 @@ import { CodexCollector } from '../collectors/codex';
 import { clampPercent, UsageSnapshot } from '../usage';
 import { VERSION } from '../version';
 import { renderDashboard } from '../webview/render';
+import { runRegressionTests } from './regressions';
 
 let passed = 0;
 let failed = 0;
@@ -112,8 +113,9 @@ async function run(): Promise<void> {
   const manifesto = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
   assert(manifesto.version === VERSION, `versão anunciada aos provedores acompanha o package.json (${VERSION})`);
 
+  passed += await runRegressionTests();
   console.log(`\n${passed} testes passaram; ${failed} falharam.`);
   process.exitCode = failed ? 1 : 0;
 }
 
-void run();
+void run().catch(error => { console.error(error); process.exitCode = 1; });

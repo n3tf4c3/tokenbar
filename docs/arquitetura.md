@@ -39,6 +39,9 @@ O TokenBar tem **um coletor** e **dois consumidores**. Todo o código de rede/IP
 | `src/usageManager.ts` | Orquestra os coletores. Deduplica refreshes concorrentes, guarda o último snapshot e notifica listeners. |
 | `src/collectors/claude.ts` | Lê a sessão OAuth do Claude Code e consulta as janelas de cota. Cache, backoff e tradução de erros. |
 | `src/collectors/codex.ts` | Sobe o `codex app-server` e faz o handshake para ler os limites da conta. |
+| `src/http.ts` | HTTP com prazo total, cancelamento, limite de tamanho e resposta incompleta. |
+| `src/diagnostics.ts` | Log local com campos permitidos e rotação de dois arquivos de 256 KiB. |
+| `tray/state.ps1` | Cálculos de idade, tempo e avisos sem GUI, compartilhados com os testes. |
 | `src/extension.ts` | Ponto de entrada do VS Code: barra de status, comandos, agendamento e persistência em `globalState`. |
 | `src/webview/render.ts` | Gera o HTML do painel a partir de um `UsageSnapshot`. **Puro**: não importa `vscode`, o que permite renderizá-lo fora do editor. |
 | `src/webview/dashboard.ts` | Cria e gerencia o `WebviewPanel` do VS Code, e trata a mensagem `refresh` vinda dele. Delega o HTML ao `render.ts`. |
@@ -62,7 +65,12 @@ Todo coletor devolve um `ProviderSnapshot`:
   plan?: string,
   windows: UsageWindow[],
   message?: string,        // diagnóstico para o usuário
-  stale?: boolean          // true quando é cache, não dado fresco
+  stale?: boolean,         // os valores vêm do cache
+  checkedAt?: string,      // última verificação local
+  lastAttemptAt?: string,  // última tentativa de rede do Claude
+  nextRetryAt?: string,    // próxima consulta permitida
+  retryReason?: 'interval' | 'rate-limit',
+  failureKind?: 'auth' | 'rate-limit' | 'network' | 'timeout' | 'invalid-response'
 }
 ```
 
@@ -93,8 +101,12 @@ os cortes estão duplicados; ao mexer numa, mexa na outra.
 - `status: 'unavailable'` — falta pré-requisito do lado do usuário (não logou, CLI ausente,
   conta sem janelas). Não é bug.
 - `status: 'error'` — falha inesperada (rede, resposta inválida, processo morreu).
-- `stale: true` — o dado é do cache; o `status` continua `'ok'` porque o número exibido é
-  válido, só não é fresco.
+- `stale: true` — os valores são do cache. O estado da última falha permanece em `status`,
+  `failureKind` e `message`; somente o cache do intervalo normal tem `status: 'ok'`.
+- O `collectedAt` por provedor preserva o horário da última leitura válida quando há cache.
+  O horário geral indica publicação do painel, não coleta de todos os serviços.
+- Janelas vencidas deixam de determinar o ícone e ficam sem preenchimento. Dados sem
+  coleta há 10 minutos recebem aviso. A interface recalcula a idade localmente.
 
 ## Fluxo de atualização
 
@@ -102,33 +114,37 @@ os cortes estão duplicados; ao mexer numa, mexa na outra.
    (`Promise.all`).
 2. Se já houver um refresh em voo, a chamada devolve a mesma promise — não há coleta
    duplicada.
-3. Ao resolver, o snapshot vira o estado atual e todos os listeners são notificados.
+3. Cada provedor publica seu resultado assim que resolve. O prazo individual de 15 s
+   aborta a consulta, publica o erro e libera novas coletas. Respostas atrasadas de uma
+   consulta cancelada não substituem resultados posteriores.
 4. Na extensão, o listener atualiza a barra de status, o painel (se aberto) e o
    `globalState`. No daemon, o listener grava `snapshot.json`.
 
 O snapshot persistido é reinjetado no construtor do `UsageManager` na próxima inicialização,
-o que restaura o cache do `ClaudeCollector` — inclusive o carimbo de última tentativa, para
-o piso de 5 minutos sobreviver a reinícios.
+o que restaura o cache do `ClaudeCollector`, `lastAttemptAt` e `nextRetryAt` de 429,
+inclusive se o estado não contém janelas. Snapshots legados seguem compatíveis.
 
 ## Coletor Claude: cache e backoff
 
 Três guardas, nesta ordem:
 
 1. **Backoff ativo** (`backoffUntil`): definido ao receber 429, usando `Retry-After` ou
-   10 minutos.
+   5 minutos. Esperas maiores informadas pelo serviço não são encurtadas.
 2. **Piso de 5 minutos** (`MIN_REFRESH_MS`): mesmo sem erro, não há chamada de rede antes
    disso.
 3. **Fallback em erro**: qualquer falha com cache disponível devolve o cache com
-   `stale: true` e a mensagem do erro, em vez de apagar o número da tela.
+   `stale: true`, estado de falha e mensagem visível, preservando a leitura anterior.
 
 As duas primeiras são decididas por `claudeThrottleReason()`, uma função pura que recebe
 só os três carimbos de tempo. Ela **não sabe se existe cache**, e isso é proposital: a
 versão anterior condicionava as guardas a haver um snapshot guardado, então uma instalação
 que ainda não tinha coletado com sucesso ignorava tanto o piso quanto o backoff. Quem
-decide o que *mostrar* enquanto a consulta está travada é `throttled()` — cache, se houver;
+decide o que *mostrar* enquanto a consulta está travada é `currentSnapshot()` — cache, se houver;
 senão o último diagnóstico, que é mais útil ao usuário que um "aguarde".
 
-Só uma coleta com pelo menos uma janela atualiza o cache e zera o backoff.
+Só uma coleta com pelo menos uma janela válida atualiza o cache e zera o backoff.
+Atualizações manuais respeitam as mesmas guardas. O HTTP tem prazo total de 10 s, trata
+`error`, `aborted` e encerramento incompleto e limita o corpo a 1 MiB.
 
 ## Coletor Codex: handshake
 
@@ -157,31 +173,33 @@ Diretório: `%LOCALAPPDATA%\tokenbar\` (fallback para o home do usuário).
 | `snapshot.json` | `daemon.js`, de forma atômica (`.tmp` + rename) | `tokenbar.ps1` |
 | `refresh.flag` | `tokenbar.ps1`, no menu "Atualizar agora" | `daemon.js`, via `fs.watch`, e apaga em seguida |
 
+O daemon grava `diagnostics.jsonl` e `diagnostics.previous.jsonl`, com rotação em 256 KiB.
+Os logs contêm apenas estado, duração e horários; mensagens remotas e credenciais não entram.
+
 A escrita atômica evita que a bandeja leia um JSON pela metade. O flag é o único canal de
 comando bandeja → daemon; não há socket nem porta aberta.
 
 O rename é atômico, mas não é infalível: no Windows ele falha com `EPERM` se a bandeja
 estiver com o `snapshot.json` aberto naquele instante. O daemon guarda o snapshot pendente
-e repete a cada 500 ms até publicar. Isso não pode virar exceção — a publicação roda dentro
-de um listener do `UsageManager`, e uma exceção ali rejeitaria o refresh, derrubando o
-processo por rejeição não tratada e levando junto o backoff, que só existe em memória.
+e repete a cada 500 ms até publicar. Falhas de publicação ficam no diagnóstico. O gerenciador
+também isola exceções dos listeners para não impedir outros consumidores ou novas coletas.
+O backoff confirmado é persistido junto do snapshot.
 
 ## Decisões e trade-offs
 
 - **Sem dependências de runtime.** Só `https` e `child_process` do Node. Reduz superfície de
   supply chain e mantém o `.vsix` pequeno.
 - **Bundle com esbuild**, não `tsc`. Compilação em milissegundos, um arquivo por alvo.
-- **Suíte de testes sem framework.** Cobre o que é puro (`clampPercent`, rotulagem e
-  duração das janelas do Codex, `claudeThrottleReason`, escape e CSP do painel). Rede e
-  processo filho não são testados — exigiriam mocks que custariam mais que o valor
-  entregue neste tamanho de projeto. Quando a lógica de uma dessas bordas importa, o
-  caminho é extraí-la para uma função pura, como foi feito com a cadência do Claude.
+- **Suíte sem framework externo.** Unidades e regressões cobrem autenticação expirada,
+  429, reinício, cache vencido, campos inválidos, prazo total, publicação independente e
+  rotação de logs. Um servidor em loopback simula HTTP interrompido e lento; credenciais
+  são sintéticas. O CI roda em Linux e Windows, com testes PowerShell para a bandeja.
 - **HTML gerado por template string**, sem framework de webview. Todo dado externo passa por
   `escapeHtml()` antes de ser interpolado.
 - **Bandeja em PowerShell**, não num app nativo. Zero build extra no Windows, e o script é
   auditável por quem instala.
-- **Bandeja passiva.** Ela não coleta nada; se o daemon cair, o painel mostra dado velho em
-  vez de reautenticar por conta própria.
+- **Bandeja passiva.** Ela não coleta nem reautentica. Dados antigos são sinalizados mesmo
+  sem novas publicações. O usuário renova sua sessão no Claude Code.
 
 ## Como adicionar um provedor
 
