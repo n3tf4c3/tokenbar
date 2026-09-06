@@ -54,17 +54,15 @@ $script:Fonts = @{
 }
 
 $script:Layout = @{
-  Width       = 430
+  Width       = 372
   Pad         = 14
   HeaderH     = 30
   ProviderH   = 24
-  RowH        = 26
-  InfoH       = 18
-  NoticeH     = 40
+  RowH        = 24
   ProviderGap = 10
-  LabelW      = 64
-  BarW        = 110
-  ValueW      = 58
+  LabelW      = 56
+  BarW        = 96
+  ValueW      = 42
 }
 
 function Get-Tone {
@@ -98,10 +96,8 @@ function Get-PanelHeight {
   $height = $script:Layout.Pad + $script:Layout.HeaderH + $script:Layout.Pad
   if (-not $providers.Count) { return $height + $script:Layout.RowH }
   foreach ($provider in $providers) {
-    $rows = @($provider.windows).Count
+    $rows = [math]::Max(1, @($provider.windows).Count)
     $height += $script:Layout.ProviderH + ($rows * $script:Layout.RowH) + $script:Layout.ProviderGap
-    $height += @(Get-ProviderInfo $provider).Count * $script:Layout.InfoH
-    if (Get-ProviderNotice $provider) { $height += $script:Layout.NoticeH }
   }
   return $height
 }
@@ -116,7 +112,6 @@ function Write-Panel {
 
   $textBrush = New-Object System.Drawing.SolidBrush $script:Colors.Text
   $mutedBrush = New-Object System.Drawing.SolidBrush $script:Colors.Muted
-  $noticeBrush = New-Object System.Drawing.SolidBrush $script:Colors.Amber
   $trackBrush = New-Object System.Drawing.SolidBrush $script:Colors.Track
   $borderPen = New-Object System.Drawing.Pen $script:Colors.Border
 
@@ -130,7 +125,7 @@ function Write-Panel {
   if ($script:Snapshot) {
     $collected = Get-Date
     if ([datetime]::TryParse($script:Snapshot.collectedAt, [ref] $collected)) {
-      $stampText = 'painel ' + $collected.ToLocalTime().ToString('HH:mm')
+      $stampText = $collected.ToLocalTime().ToString('HH:mm')
     }
   }
   $stampSize = $Graphics.MeasureString($stampText, $script:Fonts.Small)
@@ -139,29 +134,25 @@ function Write-Panel {
 
   $providers = @(Get-VisibleProviders)
   if (-not $providers.Count) {
-    $Graphics.DrawString('Aguardando o primeiro snapshot do daemon...', $script:Fonts.Body, $mutedBrush, [float] $pad, [float] $y)
+    $Graphics.DrawString('Sem dados.', $script:Fonts.Body, $mutedBrush, [float] $pad, [float] $y)
   }
 
   foreach ($provider in $providers) {
     $Graphics.DrawString([string] $provider.label, $script:Fonts.Provider, $textBrush, [float] $pad, [float] $y)
-    $tag = Get-ProviderState $provider
-    if ($provider.plan) { $tag = [string] $provider.plan + ' ' + [char] 0x00B7 + ' ' + $tag }
+    $tag = [string] $provider.plan
+    if ($provider.stale -or (Test-ProviderOutdated $provider)) {
+      if ($tag) { $tag += ' ' + [char] 0x00B7 + ' cache' } else { $tag = 'cache' }
+    }
     if ($tag) {
       $tagSize = $Graphics.MeasureString($tag, $script:Fonts.Small)
-      $tagBrush = if (Test-ProviderAttention $provider) { $noticeBrush } else { $mutedBrush }
-      $Graphics.DrawString($tag, $script:Fonts.Small, $tagBrush, [float] ($Width - $pad - $tagSize.Width), [float] ($y + 3))
+      $Graphics.DrawString($tag, $script:Fonts.Small, $mutedBrush, [float] ($Width - $pad - $tagSize.Width), [float] ($y + 3))
     }
     $y += $script:Layout.ProviderH
 
-    foreach ($info in @(Get-ProviderInfo $provider)) {
-      $Graphics.DrawString([string] $info, $script:Fonts.Small, $mutedBrush, [float] $pad, [float] $y)
-      $y += $script:Layout.InfoH
-    }
-    $notice = Get-ProviderNotice $provider
-    if ($notice) {
-      $rect = New-Object System.Drawing.RectangleF([float] $pad, [float] $y, [float] ($Width - (2 * $pad)), [float] $script:Layout.NoticeH)
-      $Graphics.DrawString($notice, $script:Fonts.Small, $noticeBrush, $rect)
-      $y += $script:Layout.NoticeH
+    if (-not $provider.windows) {
+      $Graphics.DrawString('Sem dados.', $script:Fonts.Small, $mutedBrush, [float] $pad, [float] ($y + 4))
+      $y += $script:Layout.RowH + $script:Layout.ProviderGap
+      continue
     }
 
     foreach ($window in @($provider.windows)) {
@@ -190,7 +181,6 @@ function Write-Panel {
 
       $valueX = $barX + $script:Layout.BarW + 10
       $valueText = '{0:0}%' -f $used
-      if ($old) { $valueText += '*' }
       $Graphics.DrawString($valueText, $script:Fonts.Value, $toneBrush, [float] $valueX, [float] ($y + 3))
 
       $resetText = Get-Countdown ([string] $window.resetsAt)
@@ -205,7 +195,6 @@ function Write-Panel {
 
   $textBrush.Dispose()
   $mutedBrush.Dispose()
-  $noticeBrush.Dispose()
   $trackBrush.Dispose()
   $borderPen.Dispose()
 }
@@ -218,11 +207,7 @@ function New-TrayIcon {
   $graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAlias
   $graphics.Clear([System.Drawing.Color]::Transparent)
 
-  $attention = @((Get-VisibleProviders) | Where-Object { Test-ProviderAttention $_ }).Count -gt 0
-  if ($attention) {
-    $tone = $script:Colors.Amber
-    $text = '!'
-  } elseif ($worst) {
+  if ($worst) {
     $tone = Get-Tone ([double] $worst.usedPercent)
     $text = '{0:0}' -f [double] $worst.usedPercent
   } else {

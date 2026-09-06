@@ -32,7 +32,7 @@ function Get-Countdown {
   $target = ConvertTo-UsageTimestamp $ResetsAt
   if (-not $target) { return '' }
   $span = $target - $Now
-  if ($span.TotalSeconds -le 0) { return 'aguardando coleta' }
+  if ($span.TotalSeconds -le 0) { return 'renovando' }
   if ($span.TotalDays -ge 1) { return ('renova em {0}d {1}h' -f $span.Days, $span.Hours) }
   if ($span.TotalHours -ge 1) { return ('renova em {0}h {1}m' -f $span.Hours, $span.Minutes) }
   return ('renova em {0}m' -f [math]::Max(1, [math]::Floor($span.TotalMinutes)))
@@ -62,42 +62,6 @@ function Test-ProviderAttention {
   return $false
 }
 
-function Get-ProviderState {
-  param($Provider, [DateTimeOffset] $Now = [DateTimeOffset]::UtcNow)
-  if ($Provider.failureKind -eq 'auth') { return 'renovar sessao' }
-  if ($Provider.failureKind -eq 'rate-limit') { return 'aguardando consulta' }
-  if ($Provider.status -eq 'error') { return 'erro na consulta' }
-  if (Test-ProviderAttention $Provider $Now) { return 'sem atualizacao' }
-  if ($Provider.stale) { return 'cache recente' }
-  return 'em dia'
-}
-
-function Get-ProviderInfo {
-  param($Provider, [DateTimeOffset] $Now = [DateTimeOffset]::UtcNow)
-  $collected = ConvertTo-UsageTimestamp $Provider.collectedAt
-  if ($collected -and $Provider.windows) {
-    $minutes = [math]::Max(0, [math]::Floor(($Now - $collected).TotalMinutes))
-    $age = 'ha menos de 1 min'
-    if ($minutes -ge 1440) { $age = 'ha {0}d {1}h' -f [math]::Floor($minutes / 1440), [math]::Floor(($minutes % 1440) / 60) }
-    elseif ($minutes -ge 60) { $age = 'ha {0}h {1}min' -f [math]::Floor($minutes / 60), ($minutes % 60) }
-    elseif ($minutes -ge 1) { $age = "ha $minutes min" }
-    'Ultima coleta: {0} - {1}' -f $collected.ToLocalTime().ToString('dd/MM HH:mm:ss'), $age
-  } else { 'Sem coleta valida' }
-  $retry = ConvertTo-UsageTimestamp $Provider.nextRetryAt
-  if ($retry -and $retry -gt $Now) { 'Proxima tentativa: {0}' -f $retry.ToLocalTime().ToString('dd/MM HH:mm:ss') }
-}
-
-function Get-ProviderNotice {
-  param($Provider, [DateTimeOffset] $Now = [DateTimeOffset]::UtcNow)
-  if ($Provider.message -and $Provider.status -ne 'ok') {
-    $message = [string] $Provider.message
-    if ($Provider.windows) { $message += ' (* valores anteriores)' }
-    return $message
-  }
-  if (Test-ProviderAttention $Provider $Now) { return '* Ultimo dado conhecido. Aguardando uma nova coleta valida.' }
-  return ''
-}
-
 function Get-WorstUsage {
   param([DateTimeOffset] $Now = [DateTimeOffset]::UtcNow)
   $worst = $null
@@ -117,7 +81,7 @@ function Get-TooltipText {
   if (-not $providers.Count) { return 'TokenBar - sem dados' }
   $parts = foreach ($provider in $providers) {
     if (Test-ProviderAttention $provider $Now) {
-      '{0}: {1}' -f $provider.label, (Get-ProviderState $provider $Now)
+      '{0}: indisponivel' -f $provider.label
     } else {
       $values = foreach ($window in @($provider.windows)) {
         '{0} {1:0}%' -f (Get-WindowShortLabel $window), [double] $window.usedPercent

@@ -103,14 +103,14 @@ wscript tray\tokenbar.vbs
 > `/usage` do Claude Code. As faixas de cor também são as mesmas — verde abaixo de 70%,
 > âmbar a partir de 70%, vermelho a partir de 90%.
 
-Cada provedor mostra a **última coleta válida**, a idade do dado e a próxima tentativa.
-Falhas e sessão expirada continuam visíveis mesmo com cache. Na bandeja, `!` indica
-atenção e percentuais com `*` são valores anteriores. Janelas vencidas ficam sem
-preenchimento até uma nova coleta, sem presumir 0%. Dados sem coleta há 10 minutos também
-recebem aviso, mesmo se o daemon deixar de publicar.
+Na bandeja, o painel compacto mostra as barras, percentuais e tempo até a renovação.
+O indicador discreto `cache` e a cor cinza identificam dados antigos. Janelas vencidas
+ficam sem preenchimento até uma nova coleta, sem presumir 0%. O ícone mostra o maior
+percentual válido, ou `?` quando não há uma leitura atual.
 
-Se aparecer **renovar sessão**, abra o Claude Code e use `/login`. O TokenBar volta a ler
-as credenciais nos ciclos seguintes, sem modificar o arquivo de login.
+No painel da extensão, cada provedor mostra a **última coleta válida**, a idade do dado
+e a próxima tentativa. Se aparecer **renovar sessão**, abra o Claude Code e use `/login`.
+O TokenBar volta a ler as credenciais nos ciclos seguintes, sem modificar o arquivo de login.
 
 ## Como os dados são obtidos
 

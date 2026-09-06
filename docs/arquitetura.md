@@ -105,8 +105,9 @@ os cortes estão duplicados; ao mexer numa, mexa na outra.
   `failureKind` e `message`; somente o cache do intervalo normal tem `status: 'ok'`.
 - O `collectedAt` por provedor preserva o horário da última leitura válida quando há cache.
   O horário geral indica publicação do painel, não coleta de todos os serviços.
-- Janelas vencidas deixam de determinar o ícone e ficam sem preenchimento. Dados sem
-  coleta há 10 minutos recebem aviso. A interface recalcula a idade localmente.
+- Janelas vencidas deixam de determinar o ícone e ficam sem preenchimento. Na bandeja,
+  dados sem coleta há 10 minutos ficam em cinza, com `cache` no cabeçalho do provedor.
+  Os avisos detalhados ficam no painel da extensão. As interfaces recalculam a idade localmente.
 
 ## Fluxo de atualização
 
