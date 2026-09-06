@@ -7,6 +7,12 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não publicado]
 
+### Bandeja compacta
+
+- Restaura as dimensões anteriores do painel da bandeja e remove linhas de coleta,
+  tentativas, avisos de sessão, asteriscos e o ícone de exclamação.
+- Mantém os coletores e identifica dados antigos discretamente com `cache` e cor cinza.
+
 ### Confiabilidade das cotas
 
 - Corrige os cinco achados de 05/09: avisos ocultos pelo cache, resposta HTTP pendurada,
