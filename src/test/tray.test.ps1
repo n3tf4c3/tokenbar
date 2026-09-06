@@ -36,4 +36,14 @@ $script:Snapshot = [pscustomobject]@{providers=@($claude,$codex,$antigravity)}
 Assert-Equal (Get-TooltipText $now) 'Claude: ? | Codex: 31% | Antigravity: 80%' 'Long tooltips retain all three providers and their highest valid usage'
 $codex.status = 'unavailable'; $antigravity.status = 'unavailable'
 Assert-Equal (Get-TooltipText $now) 'Claude: ? | Codex: ? | Antigravity: ?' 'Unavailable providers also fit within the Windows tooltip limit'
+$codex.status = 'ok'
+$codex.windows += @(
+  [pscustomobject]@{id='codex_bengalfox_primary';shortLabel='Spark 5h';durationMinutes=300;usedPercent=40;resetsAt=$now.AddHours(5).ToString('o')},
+  [pscustomobject]@{id='codex_bengalfox_secondary';shortLabel='Spark 7d';durationMinutes=10080;usedPercent=92;resetsAt=$now.AddDays(7).ToString('o')}
+)
+Assert-Equal (Get-WindowShortLabel $codex.windows[1]) 'Spark 5h' 'Spark five-hour quota has a compact distinct label'
+Assert-Equal (Get-WindowShortLabel $codex.windows[2]) 'Spark 7d' 'Spark weekly quota has a compact distinct label'
+Assert-Equal (Get-WorstUsage $now).usedPercent 92 'Spark can determine the tray percentage without being added to the Codex quota'
+$codex.windows[2].resetsAt = $now.AddMinutes(-1).ToString('o')
+Assert-Equal (Get-WorstUsage $now).usedPercent 40 'Expired Spark quota no longer controls the tray percentage'
 Write-Output "$passed Windows tray checks passed."

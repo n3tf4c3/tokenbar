@@ -7,6 +7,15 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não publicado]
 
+### Codex Spark
+
+- Inclui as cotas próprias do Codex Spark, antes ignoradas quando a resposta também
+  continha o limite principal do Codex.
+- Mostra `Spark 5h` e `Spark 7d` na seção Codex da bandeja, mantendo a largura compacta,
+  sem somar cotas nem duplicar a consulta ao CLI.
+- Preserva respostas legadas e contas sem Spark; adiciona testes de seleção, deduplicação,
+  validação, recuperação, persistência e apresentação, além das novas capturas dos painéis.
+
 ### Antigravity
 
 - Adiciona cotas pelo comando `/usage` do CLI oficial `agy`, sem ler credenciais do Google.

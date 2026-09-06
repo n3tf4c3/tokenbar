@@ -114,6 +114,10 @@ O indicador discreto `cache` e a cor cinza identificam dados antigos. Janelas ve
 ficam sem preenchimento até uma nova coleta, sem presumir 0%. O ícone mostra o maior
 percentual válido, ou `?` quando não há uma leitura atual.
 
+Na seção Codex, `Spark 5h` e `Spark 7d` identificam as cotas próprias do Codex Spark
+quando o CLI as disponibiliza. `7d` é a janela semanal. Elas não são somadas à cota
+principal do Codex; cada linha mantém seu percentual e horário de renovação.
+
 O Antigravity usa quatro linhas curtas: `Gem 5h`, `Gem sem`, `C/G 5h` e `C/G sem`.
 `Gem` é Gemini; `C/G` é Claude/GPT **dentro do Antigravity**, sem misturar essas cotas
 com as assinaturas Claude e Codex. No tooltip, se não couberem todas as janelas, aparece
@@ -164,11 +168,20 @@ consultou o serviço com sucesso. "Atualizar agora" também respeita as duas gua
    `%APPDATA%\npm\codex.cmd` primeiro e depois o PATH).
 2. Troca mensagens JSON por linha: `initialize` (id 1) → `initialized` →
    `account/rateLimits/read` (id 2).
-3. Converte cada janela `primary`/`secondary` de cada limite. A duração devolvida pelo
+3. Usa a visão por limite (`rateLimitsByLimitId`) para preservar a cota principal e a do
+   **Codex Spark**, sem duplicar a visão legada `rateLimits`. A consulta e o processo são
+   os mesmos; não há chamada adicional para o Spark.
+4. Converte cada janela `primary`/`secondary` de cada limite. A duração devolvida pelo
    serviço identifica a janela: 300 min → "5 horas", 10080 min → "semanal", qualquer outro
    valor vira um rótulo genérico. O processo é encerrado assim que a resposta chega.
 
 Timeout de 12 s. Se o CLI não existir, o provedor aparece como indisponível — não como erro.
+
+O [Codex Spark tem limites próprios](https://learn.chatgpt.com/docs/agent-configuration/speed#codex-spark).
+As linhas só aparecem quando o CLI retorna suas janelas: ausência desse limite não é
+tratada como 0% usado. Percentuais e renovações vêm de
+[`account/rateLimits/read`](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt),
+sem iniciar uma conversa nem consumir uma geração do modelo.
 
 ### Antigravity
 

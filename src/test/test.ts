@@ -7,6 +7,7 @@ import { VERSION } from '../version';
 import { renderDashboard } from '../webview/render';
 import { runRegressionTests } from './regressions';
 import { runAntigravityTests } from './antigravity';
+import { runCodexSparkTests } from './codexSpark';
 
 let passed = 0;
 let failed = 0;
@@ -116,6 +117,7 @@ async function run(): Promise<void> {
 
   passed += await runRegressionTests();
   passed += await runAntigravityTests();
+  passed += await runCodexSparkTests();
   console.log(`\n${passed} testes passaram; ${failed} falharam.`);
   process.exitCode = failed ? 1 : 0;
 }

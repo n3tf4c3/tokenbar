@@ -33,7 +33,7 @@ O TokenBar tem **três coletores** e **dois consumidores**. Todo o código de re
 | `src/usage.ts` | Tipos do domínio (`UsageWindow`, `ProviderSnapshot`, `UsageSnapshot`), o contrato `UsageCollector` e dois helpers: `unavailable()` e `clampPercent()`. |
 | `src/usageManager.ts` | Orquestra os coletores. Deduplica refreshes concorrentes, guarda o último snapshot e notifica listeners. |
 | `src/collectors/claude.ts` | Lê a sessão OAuth do Claude Code e consulta as janelas de cota. Cache, backoff e tradução de erros. |
-| `src/collectors/codex.ts` | Sobe o `codex app-server` e faz o handshake para ler os limites da conta. |
+| `src/collectors/codex.ts` | Sobe o `codex app-server` e lê a cota principal e as janelas próprias do Spark na mesma consulta. |
 | `src/collectors/antigravity.ts` | Executa `/usage` no CLI oficial, valida TSV, converte restante em usado e preserva cache/esperas. |
 | `src/http.ts` | HTTP com prazo total, cancelamento, limite de tamanho e resposta incompleta. |
 | `src/diagnostics.ts` | Log local com campos permitidos e rotação de dois arquivos de 256 KiB. |
@@ -161,6 +161,17 @@ que a resposta `id: 2` chega, o processo é encerrado — não fica um app-serve
 
 Timeout de 12 s. `finish()` é idempotente: erro, sucesso, `exit` e timeout competem, e só
 o primeiro vale.
+
+`rateLimits` é a visão legada de um único limite; `rateLimitsByLimitId` contém os limites
+separados. `selectCodexLimits()` prefere a entrada `codex` desse mapa e inclui o Spark,
+deduplicando o limite que também veio na visão legada. Se `limitId` estiver ausente,
+preserva a chave do mapa. Reservas e outros limites não são adicionados ao par Codex/Spark.
+
+Spark é reconhecido pelo nome/ID contendo o termo `Spark` ou por `codex_bengalfox`, o ID
+observado no CLI com `limitName: "GPT-5.3-Codex-Spark"`. Continua no provedor `codex`, com
+IDs próprios nas janelas. A duração define `Spark 5h` e `Spark 7d` em `shortLabel`; o
+dashboard usa o nome completo do período. Não há segundo coletor, processo ou chamada.
+Contas sem janelas do Spark continuam mostrando apenas as cotas existentes, sem inventar zero.
 
 ## Coletor Antigravity: comando de cotas
 

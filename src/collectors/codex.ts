@@ -20,8 +20,28 @@ interface RateLimitSnapshot {
 }
 
 interface RateLimitResponse {
-  rateLimits: RateLimitSnapshot;
+  rateLimits?: RateLimitSnapshot | null;
   rateLimitsByLimitId?: Record<string, RateLimitSnapshot> | null;
+}
+
+function isSparkLimit(snapshot: RateLimitSnapshot): boolean {
+  return snapshot.limitId === 'codex_bengalfox'
+    || [snapshot.limitId, snapshot.limitName].some(value => typeof value === 'string' && /(?:^|[-_\s])spark(?:$|[-_\s])/i.test(value));
+}
+
+function selectCodexLimits(result: RateLimitResponse): RateLimitSnapshot[] {
+  const buckets = Object.entries(result.rateLimitsByLimitId ?? {})
+    .map(([id, snapshot]) => ({ ...snapshot, limitId: snapshot.limitId ?? id }));
+  const main = buckets.find(snapshot => snapshot.limitId === 'codex') ?? result.rateLimits;
+  const snapshots = new Map<string, RateLimitSnapshot>();
+  const include = (snapshot: RateLimitSnapshot) => snapshots.set(isSparkLimit(snapshot) ? 'spark' : snapshot.limitId ?? 'codex', snapshot);
+  if (main) { include(main); }
+  else {
+    buckets.filter(snapshot => snapshot.limitId !== 'base_model_inference' && snapshot.limitName !== 'gpt-reserve').forEach(include);
+  }
+  // rateLimits é a visão legada; Spark só aparece na visão por limite, na mesma consulta.
+  buckets.filter(isSparkLimit).forEach(include);
+  return [...snapshots.values()];
 }
 
 export class CodexCollector implements UsageCollector {
@@ -30,12 +50,7 @@ export class CodexCollector implements UsageCollector {
   public async collect(_force = false, signal?: AbortSignal): Promise<ProviderSnapshot> {
     try {
       const result = await this.readRateLimits(signal);
-      const mainSnapshot = result.rateLimits ?? result.rateLimitsByLimitId?.codex;
-      const snapshots = mainSnapshot
-        ? [mainSnapshot]
-        : result.rateLimitsByLimitId
-        ? Object.values(result.rateLimitsByLimitId).filter(s => s.limitId !== 'base_model_inference' && s.limitName !== 'gpt-reserve')
-        : [];
+      const snapshots = selectCodexLimits(result);
       const windows: UsageWindow[] = [];
       let plan: string | undefined;
 
@@ -75,9 +90,11 @@ export class CodexCollector implements UsageCollector {
       throw new CollectionError('O Codex retornou um horário de renovação inválido.', 'invalid-response');
     }
     const durationLabel = duration === 300 ? 'Janela de 5 horas' : duration === 10_080 ? 'Janela semanal' : duration ? `Janela de ${this.formatDuration(duration)}` : 'Limite da assinatura';
+    const spark = isSparkLimit(snapshot);
     target.push({
       id: `${snapshot.limitId ?? 'codex'}_${position}`,
-      label: snapshot.limitName ? `${durationLabel} · ${snapshot.limitName}` : durationLabel,
+      label: spark ? `${durationLabel} · Spark` : snapshot.limitName ? `${durationLabel} · ${snapshot.limitName}` : durationLabel,
+      shortLabel: spark ? (duration === 300 ? 'Spark 5h' : duration === 10_080 ? 'Spark 7d' : 'Spark') : undefined,
       usedPercent: clampPercent(window.usedPercent),
       durationMinutes: duration,
       resetsAt: window.resetsAt != null ? new Date(window.resetsAt * 1000).toISOString() : undefined
