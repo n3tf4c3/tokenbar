@@ -28,6 +28,7 @@ severidade. Este é um projeto pessoal sem SLA formal — o compromisso é de me
 | `~/.claude/.credentials.json` | Leitura | Extrair o token OAuth da sessão do Claude Code |
 | `https://api.anthropic.com/api/oauth/usage` | HTTPS GET | Consultar as janelas de cota da assinatura |
 | `codex app-server --stdio` | Processo filho | Consultar `account/rateLimits/read` |
+| `agy --print /usage --print-timeout 10s` | Processo filho nativo | Ler cotas pelo comando oficial do Antigravity |
 | `%LOCALAPPDATA%\tokenbar\` | Leitura/escrita | Publicar e ler o snapshot do daemon |
 | `globalState` do VS Code | Leitura/escrita | Cache do último snapshot entre sessões |
 | Pasta de Inicialização do usuário | Escrita opcional | Atalho "Iniciar com o Windows" da bandeja |
@@ -41,8 +42,10 @@ Nada além disso. Não há telemetria, não há servidor do TokenBar, não há c
 - O token **não** é gravado em disco pelo TokenBar, **não** entra no snapshot, **não** entra
   no `globalState`, **não** é registrado em log e **não** é enviado a nenhum outro host.
 - O TokenBar nunca grava nem modifica `~/.claude/.credentials.json`.
-- O Codex nunca expõe credenciais ao TokenBar: a autenticação acontece dentro do próprio
-  CLI, e o TokenBar só lê o resultado dos limites.
+- Codex e Antigravity autenticam dentro dos próprios CLIs. O TokenBar só consulta os
+  limites; não lê nem exporta as credenciais do Google.
+- A saída bruta do Antigravity não entra em snapshot ou log. Erros são classificados e
+  substituídos por mensagens locais, sem URLs de login ou detalhes da conta.
 
 ### O que fica em disco
 
@@ -82,7 +85,7 @@ O mesmo vale, em menor grau, para `account/rateLimits/read` do `codex app-server
 | --- | --- |
 | Dependências de runtime | Nenhuma. A extensão e o daemon são bundles sem `node_modules` em produção. |
 | Webview do painel | HTML gerado no host; todo texto vindo dos provedores passa por escape de HTML antes de ser interpolado. |
-| Execução de processo | Só `codex app-server --stdio`, a partir de caminho fixo derivado de `%APPDATA%`/`PATH`. Nenhum argumento vem de dado remoto. |
+| Execução de processo | `codex app-server --stdio` e `agy --print /usage --print-timeout 10s`, encontrados em diretórios de instalação ou PATH. Argumentos fixos, nunca dados remotos; Antigravity usa executável nativo sem shell, timeout de 12 s e limite de saída de 64 KiB. |
 | Resposta dos provedores | Percentuais passam por `clampPercent` (0–100); campos textuais são escapados; JSON inválido vira mensagem de erro, não exceção. |
 | Script da bandeja | PowerShell local que **só lê** o snapshot; não faz rede nem lê credenciais. |
 

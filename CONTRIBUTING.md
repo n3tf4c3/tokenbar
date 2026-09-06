@@ -6,7 +6,7 @@ ser a menor que resolve o problema.
 ## Antes de escrever código
 
 - **Bug?** Abra uma issue com: versão do TokenBar, sistema operacional, provedor afetado
-  (Claude/Codex) e a mensagem exata que aparece no painel.
+  (Claude/Codex/Antigravity) e a mensagem exata que aparece no painel.
 - **Falha de segurança?** Não abra issue. Siga [SECURITY.md](SECURITY.md).
 - **Funcionalidade nova?** Abra uma issue antes do PR. Um provedor novo ou uma mudança de
   interface vale discutir primeiro; correção de bug pode ir direto para o PR.
@@ -55,7 +55,7 @@ do VS Code, então o caminho é gerar o HTML e fotografá-lo com um navegador he
 npm run compile-preview
 node dist\preview.js dashboard-preview.html
 & 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe' --headless --disable-gpu `
-  --hide-scrollbars --window-size=1240,600 `
+  --hide-scrollbars --window-size=1240,800 `
   --screenshot="$PWD\docs\imagens\painel-vscode.png" "file:///$PWD/dashboard-preview.html"
 ```
 
@@ -85,7 +85,8 @@ O projeto não tem linter configurado; siga o que já está lá:
 Essas não são preferência estética; quebrá-las quebra o comportamento do app:
 
 1. **`usedPercent` é sempre o percentual usado**, 0–100, passando por `clampPercent()`.
-   Nenhuma camada inverte o sinal: barra de status, painel e bandeja mostram esse número
+   Se a fonte retorna cota restante (Antigravity), converta uma vez no coletor. Nenhuma
+   camada de apresentação inverte o sinal: barra de status, painel e bandeja mostram esse número
    direto, para bater com o `/usage` do Claude Code. As faixas de cor (70% âmbar, 90%
    vermelho) estão duplicadas em `toneFor()` e `Get-Tone` — mexeu numa, mexa na outra.
 2. **Não remova o piso de 5 minutos nem o backoff de 429** do coletor Claude. Eles evitam
@@ -95,6 +96,9 @@ Essas não são preferência estética; quebrá-las quebra o comportamento do ap
 4. **Todo texto vindo de um provedor passa por `escapeHtml()`** antes de entrar no HTML do
    painel.
 5. **Nenhum token pode entrar em snapshot, log, `globalState` ou mensagem de erro.**
+6. **Antigravity só executa o `/usage` do CLI oficial**, com argumentos fixos, prazo e
+   limite de saída. Preserve o piso de 60 segundos e a espera de 5 minutos após `429`;
+   não leia credenciais do Google nem crie um proxy de autenticação.
 
 ## Testes
 
@@ -108,6 +112,8 @@ suíte em Linux e Windows e os testes PowerShell no Windows.
 `src/test/regressions.ts` cobre falhas, cancelamento, recuperação, persistência de 429 e
 validação. Os testes usam credenciais sintéticas e HTTP em loopback, sem consultar contas
 reais. `src/test/tray.test.ps1` importa `tray/state.ps1` sem iniciar a GUI nem o daemon.
+`src/test/antigravity.ts` cobre o TSV, conversão restante/usado, grupos, cache, reinício,
+limitação de consultas, erros sanitizados e isolamento do novo provedor, sem executar o CLI real.
 
 Para conferir a apresentação de cenários sintéticos:
 `tray\tokenbar.ps1 -PreviewPath saida.png -SnapshotFile exemplo.json`.

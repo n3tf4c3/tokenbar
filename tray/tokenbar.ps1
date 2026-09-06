@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 <#
-  TokenBar - indicador de cota das assinaturas Claude e Codex na bandeja do Windows.
+  TokenBar - indicador de cota das assinaturas Claude, Codex e Antigravity no Windows.
   Le o snapshot publicado por dist/daemon.js e desenha o painel; nao consulta os servicos.
 #>
 [CmdletBinding()]

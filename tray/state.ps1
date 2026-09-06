@@ -9,6 +9,7 @@ function ConvertTo-UsageTimestamp {
 
 function Get-WindowShortLabel {
   param($Window)
+  if ($Window.shortLabel) { return [string] $Window.shortLabel }
   if ($Window.durationMinutes) {
     $minutes = [int] $Window.durationMinutes
     if ($minutes -eq 300) { return '5h' }
@@ -90,6 +91,18 @@ function Get-TooltipText {
     }
   }
   $text = $parts -join ' | '
+  if ($text.Length -gt 63) {
+    # O tooltip do Windows aceita 63 caracteres; preserve todos os provedores.
+    $parts = foreach ($provider in $providers) {
+      if (Test-ProviderAttention $provider $Now) {
+        '{0}: ?' -f $provider.label
+      } else {
+        $maximum = ($provider.windows | Measure-Object -Property usedPercent -Maximum).Maximum
+        '{0}: {1:0}%' -f $provider.label, $maximum
+      }
+    }
+    $text = $parts -join ' | '
+  }
   if ($text.Length -gt 63) { return $text.Substring(0, 60) + '...' }
   return $text
 }
