@@ -114,6 +114,8 @@ validação. Os testes usam credenciais sintéticas e HTTP em loopback, sem cons
 reais. `src/test/tray.test.ps1` importa `tray/state.ps1` sem iniciar a GUI nem o daemon.
 `src/test/antigravity.ts` cobre o TSV, conversão restante/usado, grupos, cache, reinício,
 limitação de consultas, erros sanitizados e isolamento do novo provedor, sem executar o CLI real.
+`src/test/codexSpark.ts` cobre a seleção e deduplicação dos limites Codex/Spark, respostas
+legadas, contas sem Spark, validação, recuperação, persistência e apresentação, com respostas sintéticas.
 
 Para conferir a apresentação de cenários sintéticos:
 `tray\tokenbar.ps1 -PreviewPath saida.png -SnapshotFile exemplo.json`.
