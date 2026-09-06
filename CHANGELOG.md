@@ -7,6 +7,17 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não publicado]
 
+### Antigravity
+
+- Adiciona cotas pelo comando `/usage` do CLI oficial `agy`, sem ler credenciais do Google.
+- Separa Gemini e Claude/GPT em janelas de 5 horas e semanal; converte percentual restante
+  para usado e mantém quatro linhas curtas na bandeja, sem aumentar sua largura.
+- Adapta o dashboard aos três provedores e resume o tooltip quando necessário para que
+  nenhum provedor fique oculto pelo limite de texto do Windows.
+- Aplica prazo de consulta, limite de saída, mensagens sanitizadas, cache persistente,
+  piso de 60 segundos e espera de 5 minutos após limitação de consultas. Adiciona testes
+  de parser, falhas, cancelamento, cache, reinício e apresentação.
+
 ### Bandeja compacta
 
 - Restaura as dimensões anteriores do painel da bandeja e remove linhas de coleta,

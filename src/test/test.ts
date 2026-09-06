@@ -6,6 +6,7 @@ import { clampPercent, UsageSnapshot } from '../usage';
 import { VERSION } from '../version';
 import { renderDashboard } from '../webview/render';
 import { runRegressionTests } from './regressions';
+import { runAntigravityTests } from './antigravity';
 
 let passed = 0;
 let failed = 0;
@@ -114,6 +115,7 @@ async function run(): Promise<void> {
   assert(manifesto.version === VERSION, `versão anunciada aos provedores acompanha o package.json (${VERSION})`);
 
   passed += await runRegressionTests();
+  passed += await runAntigravityTests();
   console.log(`\n${passed} testes passaram; ${failed} falharam.`);
   process.exitCode = failed ? 1 : 0;
 }

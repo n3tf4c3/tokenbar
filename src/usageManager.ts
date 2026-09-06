@@ -1,7 +1,8 @@
 import { ClaudeCollector } from './collectors/claude';
 import { CodexCollector } from './collectors/codex';
+import { AntigravityCollector } from './collectors/antigravity';
 import { DiagnosticEvent } from './diagnostics';
-import { CollectionError, ProviderSnapshot, restoreSnapshot, unavailable, UsageCollector, UsageSnapshot } from './usage';
+import { CollectionError, PROVIDER_LABELS, ProviderSnapshot, restoreSnapshot, unavailable, UsageCollector, UsageSnapshot } from './usage';
 
 export class UsageManager {
   private readonly collectors: UsageCollector[];
@@ -14,7 +15,8 @@ export class UsageManager {
   } = {}) {
     this.snapshot = restoreSnapshot(initialSnapshot) ?? { collectedAt: new Date(0).toISOString(), providers: [] };
     const cachedClaude = this.snapshot.providers.find(provider => provider.provider === 'claude');
-    this.collectors = options.collectors ?? [new ClaudeCollector(cachedClaude), new CodexCollector()];
+    const cachedAntigravity = this.snapshot.providers.find(provider => provider.provider === 'antigravity');
+    this.collectors = options.collectors ?? [new ClaudeCollector(cachedClaude), new CodexCollector(), new AntigravityCollector(cachedAntigravity)];
   }
 
   public getSnapshot(): UsageSnapshot { return this.snapshot; }
@@ -46,7 +48,7 @@ export class UsageManager {
         Promise.resolve().then(() => collector.collect(force, controller.signal)).then(resolve, reject);
       });
     } catch (error) {
-      result = unavailable(collector.provider, collector.provider === 'claude' ? 'Claude' : 'Codex', 'Coletor de cotas',
+      result = unavailable(collector.provider, PROVIDER_LABELS[collector.provider], 'Coletor de cotas',
         error instanceof CollectionError ? error.message : 'Falha inesperada na coleta. A próxima tentativa é automática.', 'error');
       result.failureKind = error instanceof CollectionError ? error.kind : 'network';
     } finally { clearTimeout(timer); }

@@ -2,20 +2,15 @@
 
 ## Visão geral
 
-O TokenBar tem **um coletor** e **dois consumidores**. Todo o código de rede/IPC vive em
+O TokenBar tem **três coletores** e **dois consumidores**. Todo o código de rede/IPC vive em
 `src/collectors/`; a extensão do VS Code e o daemon da bandeja apenas embrulham o mesmo
 `UsageManager`.
 
 ```
-                    ┌──────────────────────┐
-                    │   UsageManager       │  dedupe de refresh + fan-out de eventos
-                    └──────────┬───────────┘
-                    ┌──────────┴───────────┐
-          ┌─────────▼────────┐   ┌─────────▼────────┐
-          │ ClaudeCollector  │   │ CodexCollector   │
-          │ HTTPS + OAuth    │   │ processo filho   │
-          └─────────┬────────┘   └─────────┬────────┘
-        api.anthropic.com          codex app-server --stdio
+   UsageManager (dedupe de refresh + eventos independentes)
+   ├── ClaudeCollector      → HTTPS + OAuth → api.anthropic.com
+   ├── CodexCollector       → processo filho → codex app-server --stdio
+   └── AntigravityCollector → processo filho → agy --print '/usage'
 
    consumidores do UsageManager:
 
@@ -39,6 +34,7 @@ O TokenBar tem **um coletor** e **dois consumidores**. Todo o código de rede/IP
 | `src/usageManager.ts` | Orquestra os coletores. Deduplica refreshes concorrentes, guarda o último snapshot e notifica listeners. |
 | `src/collectors/claude.ts` | Lê a sessão OAuth do Claude Code e consulta as janelas de cota. Cache, backoff e tradução de erros. |
 | `src/collectors/codex.ts` | Sobe o `codex app-server` e faz o handshake para ler os limites da conta. |
+| `src/collectors/antigravity.ts` | Executa `/usage` no CLI oficial, valida TSV, converte restante em usado e preserva cache/esperas. |
 | `src/http.ts` | HTTP com prazo total, cancelamento, limite de tamanho e resposta incompleta. |
 | `src/diagnostics.ts` | Log local com campos permitidos e rotação de dois arquivos de 256 KiB. |
 | `tray/state.ps1` | Cálculos de idade, tempo e avisos sem GUI, compartilhados com os testes. |
@@ -57,7 +53,7 @@ Todo coletor devolve um `ProviderSnapshot`:
 
 ```ts
 {
-  provider: 'claude' | 'codex',
+  provider: 'claude' | 'codex' | 'antigravity',
   label: string,
   status: 'ok' | 'unavailable' | 'error',
   source: string,          // origem legível, ex.: "Claude Code OAuth"
@@ -67,7 +63,7 @@ Todo coletor devolve um `ProviderSnapshot`:
   message?: string,        // diagnóstico para o usuário
   stale?: boolean,         // os valores vêm do cache
   checkedAt?: string,      // última verificação local
-  lastAttemptAt?: string,  // última tentativa de rede do Claude
+  lastAttemptAt?: string,  // última tentativa de consulta ao provedor
   nextRetryAt?: string,    // próxima consulta permitida
   retryReason?: 'interval' | 'rate-limit',
   failureKind?: 'auth' | 'rate-limit' | 'network' | 'timeout' | 'invalid-response'
@@ -80,6 +76,7 @@ E cada `UsageWindow`:
 {
   id: string,
   label: string,
+  shortLabel?: string,     // rótulo compacto opcional, ex.: "Gem 5h"
   usedPercent: number,     // sempre 0–100, via clampPercent
   resetsAt?: string,       // ISO 8601
   durationMinutes?: number,
@@ -122,7 +119,7 @@ os cortes estão duplicados; ao mexer numa, mexa na outra.
    `globalState`. No daemon, o listener grava `snapshot.json`.
 
 O snapshot persistido é reinjetado no construtor do `UsageManager` na próxima inicialização,
-o que restaura o cache do `ClaudeCollector`, `lastAttemptAt` e `nextRetryAt` de 429,
+o que restaura o cache de Claude e Antigravity, `lastAttemptAt` e `nextRetryAt` de 429,
 inclusive se o estado não contém janelas. Snapshots legados seguem compatíveis.
 
 ## Coletor Claude: cache e backoff
@@ -165,6 +162,28 @@ que a resposta `id: 2` chega, o processo é encerrado — não fica um app-serve
 Timeout de 12 s. `finish()` é idempotente: erro, sucesso, `exit` e timeout competem, e só
 o primeiro vale.
 
+## Coletor Antigravity: comando de cotas
+
+Executa o binário nativo `agy` com argumentos fixos `--print /usage --print-timeout 10s`,
+via `execFile`, sem shell, no diretório temporário do sistema e com janela oculta. Procura
+na instalação padrão do usuário e no PATH. O CLI gerencia a própria autenticação.
+
+O parser aceita linhas TSV com quatro campos: grupo, período, percentual restante e
+renovação ISO. Os grupos conhecidos são `Gemini Models` e `Claude and GPT models`; os
+períodos são `Five Hour Limit Remaining` e `Weekly Limit Remaining`. Grupos parciais são
+aceitos, mas campos inválidos, janelas duplicadas e formatos desconhecidos falham sem
+inventar cotas. O percentual restante é convertido uma única vez para usado.
+
+Os IDs distinguem grupo e período (`antigravity_gemini_five_hour`, por exemplo).
+`label` identifica ambos no dashboard; `shortLabel` permite `Gem 5h`, `Gem sem`, `C/G 5h`
+e `C/G sem` na bandeja, mantendo sua largura. Essas cotas não são somadas às de Claude/Codex.
+
+O processo tem timeout externo de 12 s, sinal de cancelamento e limite de saída de 64 KiB.
+Falhas viram mensagens locais, nunca stdout/stderr brutos. CLI ausente ou autenticação
+necessária ficam `unavailable`. Há piso de 60 s entre tentativas e espera de 5 min após
+limitação de consultas, inclusive no refresh manual e após reinício. Falhas preservam as
+últimas janelas e seu `collectedAt`.
+
 ## Estado em disco (bandeja)
 
 Diretório: `%LOCALAPPDATA%\tokenbar\` (fallback para o home do usuário).
@@ -206,7 +225,7 @@ O backoff confirmado é persistido junto do snapshot.
 
 1. Implemente `UsageCollector` em `src/collectors/<nome>.ts`, devolvendo `ProviderSnapshot`.
 2. Use `clampPercent()` em todo percentual e `unavailable()` para pré-requisito ausente.
-3. Adicione o id ao union `ProviderId` em `src/usage.ts`.
+3. Adicione o id ao union `ProviderId` e ao mapa `PROVIDER_LABELS` em `src/usage.ts`.
 4. Registre a instância no array `collectors` do `UsageManager`.
 5. Se a interface tiver cor própria, acrescente a regra `.provider.<id>:before` no CSS do
    dashboard.

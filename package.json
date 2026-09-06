@@ -2,7 +2,7 @@
   "name": "tokenbar",
   "publisher": "pepg",
   "displayName": "TokenBar",
-  "description": "Acompanhe as cotas reais das assinaturas Claude e Codex.",
+  "description": "Acompanhe as cotas reais das assinaturas Claude, Codex e Antigravity.",
   "version": "0.1.1",
   "license": "MIT",
   "repository": {

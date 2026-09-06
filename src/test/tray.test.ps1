@@ -24,4 +24,16 @@ Assert-Equal (Test-ProviderAttention $claude $now) $true 'Expired reset needs at
 Assert-Equal (Test-ProviderOutdated $codex $now.AddMinutes(10)) $true 'A stopped daemon becomes visibly outdated'
 $script:Snapshot = [pscustomobject]@{providers=@($codex)}
 Assert-Equal ((Get-TooltipText $now) -match 'Codex') $true 'One provider renders correctly on PowerShell 5.1'
+$antigravity = [pscustomobject]@{provider='antigravity';label='Antigravity';status='ok';collectedAt=$now.ToString('o');windows=@(
+  [pscustomobject]@{id='antigravity_gemini_five_hour';shortLabel='Gem 5h';durationMinutes=300;usedPercent=80;resetsAt=$now.AddHours(5).ToString('o')},
+  [pscustomobject]@{id='antigravity_claude_gpt_seven_day';shortLabel='C/G sem';durationMinutes=10080;usedPercent=0;resetsAt=$now.AddDays(7).ToString('o')}
+)}
+Assert-Equal (Get-WindowShortLabel $antigravity.windows[0]) 'Gem 5h' 'Antigravity distinguishes Gemini in compact rows'
+Assert-Equal (Get-WindowShortLabel $antigravity.windows[1]) 'C/G sem' 'Antigravity distinguishes its Claude and GPT quota'
+$script:Snapshot = [pscustomobject]@{providers=@($codex,$antigravity)}
+Assert-Equal (Get-WorstUsage $now).usedPercent 80 'Antigravity participates in the tray percentage'
+$script:Snapshot = [pscustomobject]@{providers=@($claude,$codex,$antigravity)}
+Assert-Equal (Get-TooltipText $now) 'Claude: ? | Codex: 31% | Antigravity: 80%' 'Long tooltips retain all three providers and their highest valid usage'
+$codex.status = 'unavailable'; $antigravity.status = 'unavailable'
+Assert-Equal (Get-TooltipText $now) 'Claude: ? | Codex: ? | Antigravity: ?' 'Unavailable providers also fit within the Windows tooltip limit'
 Write-Output "$passed Windows tray checks passed."

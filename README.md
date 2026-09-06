@@ -1,6 +1,6 @@
 # TokenBar
 
-Painel unificado para acompanhar a **cota real das assinaturas** Claude e Codex, sem
+Painel unificado para acompanhar a **cota real das assinaturas** Claude, Codex e Antigravity, sem
 confundi-la com as outras três coisas que costumam ser chamadas de "tokens":
 
 | O que é | O que o TokenBar mostra |
@@ -15,6 +15,7 @@ coletor.
 
 ## Sumário
 
+- [Requisitos](#requisitos)
 - [Instalação](#instalação)
 - [Uso](#uso)
 - [Configuração](#configuração)
@@ -27,12 +28,17 @@ coletor.
 
 ## Requisitos
 
-- VS Code `^1.75.0` (ou editor compatível com a API de extensões do VS Code).
-- Node.js 18+ para compilar.
+- Para a extensão: VS Code `^1.75.0` (ou editor compatível com sua API de extensões).
+- Node.js 18+ para compilar e executar o daemon da bandeja.
 - Para o provedor **Claude**: [Claude Code](https://claude.com/claude-code) instalado e com
   login feito (o TokenBar reaproveita a sessão OAuth já existente).
 - Para o provedor **Codex**: o CLI `codex` instalado e autenticado.
+- Para o provedor **Antigravity**: o [CLI oficial `agy`](https://antigravity.google/docs/cli/)
+  instalado e autenticado, com suporte a `agy --print '/usage'`.
 - Para a bandeja: Windows com PowerShell 5.1+.
+
+Não é necessário instalar o VS Code para usar apenas a bandeja. Cada provedor é
+independente: um CLI ausente ou uma sessão expirada não impede a coleta dos demais.
 
 ## Instalação
 
@@ -55,7 +61,7 @@ todos os provedores, no formato `Claude 84%` — onde o número é a cota já **
 | Comando | Ação |
 | --- | --- |
 | `TokenBar: Open Dashboard` | Abre o painel com uma barra por janela |
-| `TokenBar: Atualizar cotas` | Força uma coleta imediata, com notificação de progresso |
+| `TokenBar: Atualizar cotas` | Solicita uma coleta, respeitando o intervalo de cada provedor |
 
 Clicar no indicador da barra de status também abre o painel.
 
@@ -65,9 +71,9 @@ Clicar no indicador da barra de status também abre o painel.
 | --- | --- | --- | --- | --- |
 | `tokenbar.refreshInterval` | `integer` | `60` | 15–3600 | Intervalo, em segundos, entre coletas automáticas. |
 
-O intervalo vale para o agendamento local. O coletor do Claude aplica o próprio piso de
-5 minutos entre chamadas de rede (veja [Como os dados são obtidos](#como-os-dados-são-obtidos)),
-então baixar esse valor não aumenta a frequência real de consulta ao Claude.
+O intervalo vale para o agendamento local. Claude aplica um piso de 5 minutos e Antigravity
+de 60 segundos entre consultas (veja [Como os dados são obtidos](#como-os-dados-são-obtidos)).
+Baixar esse valor ou usar "Atualizar agora" não ultrapassa esses pisos.
 
 ## Bandeja do Windows
 
@@ -90,7 +96,7 @@ wscript tray\tokenbar.vbs
   atômica (escreve `.tmp` e renomeia).
 - `tray/tokenbar.ps1` **apenas lê** esse arquivo: desenha o ícone com o percentual mais
   crítico, o tooltip resumido e o painel com uma barra por janela e o tempo até a renovação.
-  Ele nunca fala com Claude ou Codex diretamente.
+  Ele nunca fala com Claude, Codex ou Antigravity diretamente.
 - Clique esquerdo abre o painel; clique direito traz "Atualizar agora", "Iniciar com o
   Windows" e "Sair". "Atualizar agora" cria `refresh.flag` no diretório de estado, que o
   daemon observa e consome.
@@ -108,9 +114,15 @@ O indicador discreto `cache` e a cor cinza identificam dados antigos. Janelas ve
 ficam sem preenchimento até uma nova coleta, sem presumir 0%. O ícone mostra o maior
 percentual válido, ou `?` quando não há uma leitura atual.
 
+O Antigravity usa quatro linhas curtas: `Gem 5h`, `Gem sem`, `C/G 5h` e `C/G sem`.
+`Gem` é Gemini; `C/G` é Claude/GPT **dentro do Antigravity**, sem misturar essas cotas
+com as assinaturas Claude e Codex. No tooltip, se não couberem todas as janelas, aparece
+apenas o maior percentual de cada provedor.
+
 No painel da extensão, cada provedor mostra a **última coleta válida**, a idade do dado
-e a próxima tentativa. Se aparecer **renovar sessão**, abra o Claude Code e use `/login`.
-O TokenBar volta a ler as credenciais nos ciclos seguintes, sem modificar o arquivo de login.
+e a próxima tentativa. Se o Claude pedir **renovar sessão**, abra o Claude Code e use `/login`.
+Para Codex ou Antigravity, renove o login no CLI correspondente. O TokenBar tenta novamente
+nos ciclos seguintes, sem modificar arquivos de login.
 
 ## Como os dados são obtidos
 
@@ -158,12 +170,44 @@ consultou o serviço com sucesso. "Atualizar agora" também respeita as duas gua
 
 Timeout de 12 s. Se o CLI não existir, o provedor aparece como indisponível — não como erro.
 
+### Antigravity
+
+1. Localiza o executável nativo `agy`: `%LOCALAPPDATA%\agy\bin\agy.exe` no Windows,
+   diretórios usuais no Linux/macOS ou o PATH.
+2. Executa apenas `agy --print '/usage' --print-timeout 10s`, sem shell e sem janela.
+   A autenticação fica no CLI oficial; o TokenBar não lê tokens do Google.
+3. Interpreta o relatório TSV do comando: grupo, período, percentual **restante** e
+   renovação. Converte uma vez para `usedPercent = 100 - restante`.
+4. Mantém separadas as janelas de 5 horas e semanal dos grupos Gemini e Claude/GPT.
+
+O coletor espera no mínimo 60 segundos entre consultas e 5 minutos quando o CLI informa
+limitação de consultas (`429`). Essas esperas persistem após reinícios, inclusive sem cache,
+e valem no refresh manual. Prazo externo de 12 s, cancelamento e limite de saída de 64 KiB
+impedem uma consulta pendurada de bloquear os outros provedores. Falhas preservam a última
+leitura válida; formatos desconhecidos não viram 0%.
+
+Usa o comando público de [cotas](https://antigravity.google/docs/cli/commands/usage/)
+em [modo não interativo](https://antigravity.google/docs/cli/headless/), sem prompts de
+geração, proxy ou endpoint privado. Validado localmente com `agy 1.1.27`.
+
+Para conferir a leitura fora do TokenBar, execute no terminal:
+
+```powershell
+agy --print '/usage' --print-timeout 10s
+```
+
+O CLI informa a cota **disponível**; o TokenBar mostra a cota **usada**. Portanto, `100%`
+no relatório do CLI corresponde a `0%` na barra. Se o comando não retornar cotas, confira
+a instalação e o login no CLI oficial. Não copie credenciais para o TokenBar.
+
 ## Privacidade e credenciais
 
 - O TokenBar **lê** credenciais locais (`~/.claude/.credentials.json`) apenas para
   autenticar a consulta ao serviço correspondente.
 - Tokens de acesso **nunca** são gravados pelo TokenBar, nem enviados para qualquer
   servidor que não seja o do próprio provedor.
+- A autenticação de Codex e Antigravity é feita pelos próprios CLIs. O TokenBar não
+  registra a saída bruta do Antigravity nem URLs de login; as mensagens de falha são locais.
 - Não há telemetria. Não há servidor do TokenBar.
 - O painel e o snapshot em disco recebem apenas: percentuais, horários de renovação, nome
   do plano e mensagens de diagnóstico.

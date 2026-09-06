@@ -1,4 +1,5 @@
-export type ProviderId = 'claude' | 'codex';
+export type ProviderId = 'claude' | 'codex' | 'antigravity';
+export const PROVIDER_LABELS: Record<ProviderId, string> = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
 export type FailureKind = 'auth' | 'rate-limit' | 'network' | 'timeout' | 'invalid-response';
 export const MAX_DATA_AGE_MS = 10 * 60 * 1000;
 
@@ -10,6 +11,7 @@ export interface UsageWindow {
   id: string;
   label: string;
   usedPercent: number;
+  shortLabel?: string;
   resetsAt?: string;
   durationMinutes?: number;
   detail?: string;
@@ -115,13 +117,14 @@ export function restoreSnapshot(value: unknown): UsageSnapshot | undefined {
   if (!Array.isArray(candidate.providers)) { return undefined; }
   const providers = candidate.providers.filter(provider => {
     try {
-      return provider && ['claude', 'codex'].includes(provider.provider)
+      return provider && typeof provider.provider === 'string' && Object.prototype.hasOwnProperty.call(PROVIDER_LABELS, provider.provider)
         && ['ok', 'error', 'unavailable'].includes(provider.status)
         && typeof provider.label === 'string' && typeof provider.source === 'string'
         && typeof provider.collectedAt === 'string' && Number.isFinite(Date.parse(provider.collectedAt))
         && [provider.message, provider.plan, provider.nextRetryAt, provider.lastAttemptAt].every(item => item === undefined || typeof item === 'string')
         && Array.isArray(provider.windows) && provider.windows.every(window =>
           typeof window.id === 'string' && typeof window.label === 'string'
+          && (window.shortLabel === undefined || typeof window.shortLabel === 'string')
           && typeof window.usedPercent === 'number' && clampPercent(window.usedPercent) === window.usedPercent
           && (window.resetsAt === undefined || parseReset(window.resetsAt) !== undefined));
     } catch { return false; }
