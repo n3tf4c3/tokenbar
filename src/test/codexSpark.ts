@@ -106,5 +106,16 @@ export async function runCodexSparkTests(): Promise<number> {
     assert.ok(html.includes('62% usado')); assert.equal(worstCurrentUsage(restored, NOW)?.window.id, 'codex_bengalfox_secondary');
     assert.equal(worstCurrentUsage(restored, NOW + 8 * 86400_000), undefined);
   });
+
+  await check('resolveCodexTarget preserva fallback JS desconhecido e executável direto', async () => {
+    const collector = new CodexCollector();
+    const jsTarget = collector.resolveCodexTarget('C:\\dummy\\codex.js');
+    assert.equal(jsTarget.executable, process.execPath);
+    assert.deepEqual(jsTarget.args, ['C:\\dummy\\codex.js']);
+
+    const exeTarget = collector.resolveCodexTarget('C:\\dummy\\codex.exe');
+    assert.equal(exeTarget.executable, 'C:\\dummy\\codex.exe');
+    assert.deepEqual(exeTarget.args, []);
+  });
   return passed;
 }

@@ -146,6 +146,15 @@ Atualizações manuais respeitam as mesmas guardas. O HTTP tem prazo total de 10
 
 ## Coletor Codex: handshake
 
+No Windows, o coletor resolve o binário nativo a partir do pacote oficial `@openai/codex`
+e o inicia diretamente com `windowsHide`. Aceita a dependência específica da arquitetura,
+pacotes ligados e os layouts `vendor/.../bin` e `vendor/.../codex`. Isso evita tanto o
+`cmd.exe` do shim npm quanto o Node intermediário e permite encerrar o processo final.
+Somente o shim npm padrão reconhecido é substituído: scripts `.cmd`/`.bat` personalizados
+rodam integralmente em um shell oculto, com o caminho entre aspas, preservando argumentos,
+ambiente e mudanças de diretório. JS desconhecido mantém o fallback Node, inclusive no
+extension host Electron. Os testes de Windows usam instalações e scripts sintéticos.
+
 O `codex app-server --stdio` fala JSON por linha (stdin/stdout):
 
 | Direção | Mensagem |

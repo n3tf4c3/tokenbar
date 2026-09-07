@@ -7,6 +7,13 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não publicado]
 
+### Coleta silenciosa do Codex no Windows
+
+- Executa diretamente o binário nativo das instalações npm reconhecidas, com janela
+  oculta e encerramento direto no timeout, incluindo pacotes ligados e layouts antigos.
+- Preserva atalhos personalizados por inteiro, sem descartar argumentos, ambiente ou
+  diretório de trabalho. Adiciona testes de resolução e execução, sem mudar os painéis.
+
 ### Codex Spark
 
 - Inclui as cotas próprias do Codex Spark, antes ignoradas quando a resposta também
