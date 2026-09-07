@@ -166,6 +166,8 @@ consultou o serviço com sucesso. "Atualizar agora" também respeita as duas gua
 
 1. Sobe `codex app-server --stdio` como processo filho (no Windows, procurando
    `%APPDATA%\npm\codex.cmd` primeiro e depois o PATH).
+   Instalações npm reconhecidas usam diretamente o `codex.exe`, com janela oculta;
+   atalhos personalizados mantêm seus argumentos e ambiente originais.
 2. Troca mensagens JSON por linha: `initialize` (id 1) → `initialized` →
    `account/rateLimits/read` (id 2).
 3. Usa a visão por limite (`rateLimitsByLimitId`) para preservar a cota principal e a do

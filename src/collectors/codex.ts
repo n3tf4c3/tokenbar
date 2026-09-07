@@ -1,5 +1,6 @@
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import * as fs from 'fs';
+import { createRequire } from 'module';
 import * as os from 'os';
 import * as path from 'path';
 import { clampPercent, CollectionError, ProviderSnapshot, unavailable, UsageCollector, UsageWindow } from '../usage';
@@ -22,6 +23,32 @@ interface RateLimitSnapshot {
 interface RateLimitResponse {
   rateLimits?: RateLimitSnapshot | null;
   rateLimitsByLimitId?: Record<string, RateLimitSnapshot> | null;
+}
+
+// Só este shim npm conhecido é transparente. Um script editado pode preparar
+// ambiente, diretório ou argumentos que precisam continuar sendo executados.
+const NPM_CODEX_SHIM = String.raw`@ECHO off
+GOTO start
+:find_dp0
+SET dp0=%~dp0
+EXIT /b
+:start
+SETLOCAL
+CALL :find_dp0
+IF EXIST "%dp0%\node.exe" (
+  SET "_prog=%dp0%\node.exe"
+) ELSE (
+  SET "_prog=node"
+  SET PATHEXT=%PATHEXT:;.JS;=;%
+)
+endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\node_modules\@openai\codex\bin\codex.js" %*`;
+
+function normalizeNpmShim(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function isFile(filename: string): boolean {
+  try { return fs.statSync(filename).isFile(); } catch { return false; }
 }
 
 function isSparkLimit(snapshot: RateLimitSnapshot): boolean {
@@ -187,9 +214,72 @@ export class CodexCollector implements UsageCollector {
       if (!command) {
         throw new Error('missing');
       }
-      return spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/c', command, 'app-server', '--stdio'], { windowsHide: true });
+      const target = this.resolveCodexTarget(command);
+      if (/\.(?:cmd|bat)$/i.test(target.executable)) {
+        // /s remove apenas as aspas externas; as internas protegem o caminho,
+        // inclusive espaços e &. O script recebe os argumentos sem ser reescrito.
+        return spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `""${target.executable}" app-server --stdio"`], {
+          windowsHide: true, windowsVerbatimArguments: true
+        });
+      }
+      return spawn(target.executable, [...target.args, 'app-server', '--stdio'], {
+        windowsHide: true,
+        // No extension host, execPath pode ser Electron em vez de node.exe.
+        ...(target.executable === process.execPath ? { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } } : {})
+      });
     }
     return spawn('codex', ['app-server', '--stdio']);
+  }
+
+  /**
+   * O codex.js também abre um processo nativo. Executar esse binário diretamente
+   * aplica windowsHide ao processo final e permite encerrá-lo no timeout.
+   */
+  public resolveCodexTarget(command: string): { executable: string; args: string[] } {
+    if (/\.js$/i.test(command)) {
+      const native = this.findNativeCodex(command);
+      return native ? { executable: native, args: [] } : { executable: process.execPath, args: [command] };
+    }
+    if (/\.(?:cmd|bat)$/i.test(command)) {
+      const dir = path.dirname(command);
+      const standardJs = path.join(dir, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+      try {
+        const content = fs.readFileSync(command, 'utf8');
+        if (isFile(standardJs) && normalizeNpmShim(content) === normalizeNpmShim(NPM_CODEX_SHIM)) {
+          const native = this.findNativeCodex(standardJs);
+          if (native) { return { executable: native, args: [] }; }
+        }
+      } catch {
+        // Um shim desconhecido ou ilegível mantém seu comportamento original.
+      }
+    }
+    return { executable: command, args: [] };
+  }
+
+  private findNativeCodex(entryPoint: string): string | undefined {
+    const target = process.arch === 'x64' ? 'x86_64-pc-windows-msvc'
+      : process.arch === 'arm64' ? 'aarch64-pc-windows-msvc' : undefined;
+    if (!target) { return undefined; }
+    try {
+      // realpath e createRequire também atendem pacotes ligados pelo pnpm.
+      const entry = fs.realpathSync(entryPoint);
+      const root = path.dirname(path.dirname(entry));
+      const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+      if (manifest.name !== '@openai/codex' || entry !== path.join(root, 'bin', 'codex.js')) { return undefined; }
+      const vendorRoots: string[] = [];
+      try {
+        const platformPackage = createRequire(entry).resolve(`@openai/codex-win32-${process.arch}/package.json`);
+        vendorRoots.push(path.join(path.dirname(platformPackage), 'vendor'));
+      } catch { /* Versões antigas incluem vendor no próprio pacote. */ }
+      vendorRoots.push(path.join(root, 'vendor'));
+      for (const vendor of vendorRoots) {
+        for (const directory of ['bin', 'codex']) {
+          const binary = path.join(vendor, target, directory, 'codex.exe');
+          if (isFile(binary)) { return binary; }
+        }
+      }
+    } catch { /* Instalação desconhecida: o inicializador original continua disponível. */ }
+    return undefined;
   }
 
   /**
@@ -200,15 +290,18 @@ export class CodexCollector implements UsageCollector {
    */
   private findCodexOnWindows(): string | undefined {
     const appData = process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming');
-    const candidates = [path.join(appData, 'npm', 'codex.cmd')];
+    const candidates = [
+      path.join(appData, 'npm', 'codex.cmd'),
+      path.join(appData, 'npm', 'node_modules', '@openai', 'codex', 'bin', 'codex.js')
+    ];
     for (const directory of (process.env.PATH ?? '').split(path.delimiter)) {
       if (!directory) {
         continue;
       }
-      for (const extension of ['.cmd', '.exe', '.bat']) {
+      for (const extension of ['.exe', '.cmd', '.bat', '.js']) {
         candidates.push(path.join(directory.replace(/^"|"$/g, ''), `codex${extension}`));
       }
     }
-    return candidates.find(candidate => fs.existsSync(candidate));
+    return candidates.find(isFile);
   }
 }
