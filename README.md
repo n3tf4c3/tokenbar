@@ -191,6 +191,9 @@ sem iniciar uma conversa nem consumir uma geração do modelo.
    diretórios usuais no Linux/macOS ou o PATH.
 2. Executa apenas `agy --print '/usage' --print-timeout 10s`, sem shell e sem janela.
    A autenticação fica no CLI oficial; o TokenBar não lê tokens do Google.
+   Define `AGY_CLI_DISABLE_AUTO_UPDATE=true` somente nessa consulta para impedir que
+   o atualizador do CLI crie processos que abram um terminal. O uso normal de `agy`
+   fora do TokenBar mantém a configuração de atualização do usuário.
 3. Interpreta o relatório TSV do comando: grupo, período, percentual **restante** e
    renovação. Converte uma vez para `usedPercent = 100 - restante`.
 4. Mantém separadas as janelas de 5 horas e semanal dos grupos Gemini e Claude/GPT.

@@ -188,6 +188,13 @@ Executa o binário nativo `agy` com argumentos fixos `--print /usage --print-tim
 via `execFile`, sem shell, no diretório temporário do sistema e com janela oculta. Procura
 na instalação padrão do usuário e no PATH. O CLI gerencia a própria autenticação.
 
+O ambiente do processo inclui `AGY_CLI_DISABLE_AUTO_UPDATE=true`, a
+[opção oficial do atualizador](https://antigravity.google/docs/cli/troubleshooting/).
+Isso impede o auto-updater de iniciar outros `agy.exe` durante a consulta. No Windows,
+esses descendentes podiam abrir uma janela do Terminal apesar de `windowsHide` no
+processo inicial. A opção é passada em uma cópia de `process.env`: não altera o ambiente
+do daemon, as configurações do sistema ou as atualizações do CLI executado pelo usuário.
+
 O parser aceita linhas TSV com quatro campos: grupo, período, percentual restante e
 renovação ISO. Os grupos conhecidos são `Gemini Models` e `Claude and GPT models`; os
 períodos são `Five Hour Limit Remaining` e `Weekly Limit Remaining`. Grupos parciais são

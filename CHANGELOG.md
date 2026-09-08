@@ -7,6 +7,13 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não publicado]
 
+### Coleta silenciosa do Antigravity
+
+- Desativa o auto-updater do `agy` somente nos processos de consulta do TokenBar,
+  evitando os processos internos que abriam flashes do Windows Terminal.
+- Mantém o comando público `/usage`, a autenticação do CLI e as atualizações do
+  Antigravity executado fora do TokenBar.
+
 ### Coleta silenciosa do Codex no Windows
 
 - Executa diretamente o binário nativo das instalações npm reconhecidas, com janela

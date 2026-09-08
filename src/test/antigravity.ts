@@ -1,4 +1,7 @@
 import * as assert from 'assert/strict';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { AntigravityCollector, ANTIGRAVITY_REFRESH_MS, antigravityCliFailure, parseAntigravityUsage } from '../collectors/antigravity';
 import { CollectionError, ProviderSnapshot, restoreSnapshot, worstCurrentUsage } from '../usage';
 import { UsageManager } from '../usageManager';
@@ -39,6 +42,55 @@ export async function runAntigravityTests(): Promise<number> {
     for (const invalid of [valid.replace('2026-09-12T13:50:06Z', 'invalid'), valid.replace('Gemini Models', 'Unknown'),
       valid.replace('Weekly Limit Remaining', 'Unknown'), `${valid}\tunexpected`, `${valid}\n${valid}`, 'Warning: auth failed']) {
       assert.throws(() => parseAntigravityUsage(invalid), CollectionError);
+    }
+  });
+
+  await check('Consulta do Antigravity inibe o updater no filho sem alterar o ambiente do chamador', async () => {
+    const childProcess = require('child_process') as typeof import('child_process');
+    const originalExecFile = childProcess.execFile;
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenbar-antigravity-process-'));
+    const bin = path.join(directory, 'agy', 'bin');
+    const probe = path.join(directory, 'probe.js');
+    const updaterMarker = path.join(directory, 'updater-started');
+    const keys = ['LOCALAPPDATA', 'PATH', 'AGY_CLI_DISABLE_AUTO_UPDATE', 'TOKENBAR_TEST_ANTIGRAVITY'];
+    const previous = new Map(keys.map(key => [key, process.env[key]]));
+    try {
+      fs.mkdirSync(bin, { recursive: true });
+      fs.writeFileSync(path.join(bin, process.platform === 'win32' ? 'agy.exe' : 'agy'), 'synthetic; never executed');
+      fs.writeFileSync(probe, `
+        const fs = require('fs');
+        if (process.env.AGY_CLI_DISABLE_AUTO_UPDATE !== 'true') {
+          fs.writeFileSync(${JSON.stringify(updaterMarker)}, 'updater started');
+          process.exit(42);
+        }
+        if (process.env.TOKENBAR_TEST_ANTIGRAVITY !== 'preserved') process.exit(43);
+        require('assert/strict').deepEqual(process.argv.slice(2), ['--print', '/usage', '--print-timeout', '10s']);
+        process.stdin.resume();
+        process.stdin.on('end', () => process.stdout.write(${JSON.stringify(output)}));
+      `);
+      process.env.LOCALAPPDATA = directory;
+      process.env.PATH = `${bin}${path.delimiter}${previous.get('PATH') ?? ''}`;
+      process.env.TOKENBAR_TEST_ANTIGRAVITY = 'preserved';
+      // Usa um processo real para conferir ambiente, argumentos e resposta, sem chamar o CLI da conta.
+      childProcess.execFile = ((_executable: string, args: string[], options: any, callback: any) =>
+        originalExecFile(process.execPath, [probe, ...args], options, callback)) as typeof childProcess.execFile;
+      for (const parentValue of [undefined, 'false']) {
+        if (parentValue === undefined) { delete process.env.AGY_CLI_DISABLE_AUTO_UPDATE; }
+        else { process.env.AGY_CLI_DISABLE_AUTO_UPDATE = parentValue; }
+        const result = await new AntigravityCollector().collect();
+        assert.equal(result.status, 'ok', result.message);
+        assert.deepEqual(result.windows.map(window => window.usedPercent), [37.5, 75, 100, 0]);
+        assert.equal(fs.existsSync(updaterMarker), false);
+        assert.equal(process.env.AGY_CLI_DISABLE_AUTO_UPDATE, parentValue);
+      }
+    } finally {
+      childProcess.execFile = originalExecFile;
+      for (const [key, value] of previous) {
+        if (value === undefined) { delete process.env[key]; } else { process.env[key] = value; }
+      }
+      assert.equal(path.dirname(path.resolve(directory)), path.resolve(os.tmpdir()));
+      assert.ok(path.basename(directory).startsWith('tokenbar-antigravity-process-'));
+      fs.rmSync(directory, { recursive: true, force: true });
     }
   });
 
