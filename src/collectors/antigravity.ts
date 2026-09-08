@@ -89,7 +89,10 @@ function readUsage(signal?: AbortSignal): Promise<string> {
     if (!executable) { reject(antigravityCliFailure({ code: 'ENOENT' }, '')); return; }
     // Executa apenas o comando interno de cotas; nenhum prompt ou token é enviado pelo TokenBar.
     const child = execFile(executable, ['--print', '/usage', '--print-timeout', '10s'], {
-      cwd: os.tmpdir(), windowsHide: true, timeout: 12_000, maxBuffer: 64 * 1024, encoding: 'utf8', signal
+      cwd: os.tmpdir(), windowsHide: true, timeout: 12_000, maxBuffer: 64 * 1024, encoding: 'utf8', signal,
+      // O auto-updater cria outros agy.exe que podem abrir um terminal no Windows.
+      // A consulta não atualiza o CLI; a opção vale só para este processo e seus filhos.
+      env: { ...process.env, AGY_CLI_DISABLE_AUTO_UPDATE: 'true' }
     }, (error, stdout, stderr) => {
       if (error) { reject(antigravityCliFailure(error, `${stdout}\n${stderr}`)); }
       else { resolve(stdout); }
