@@ -8,7 +8,8 @@ param(
   [int] $IntervalSeconds = 60,
   [double] $Opacity = 0.92,
   [string] $PreviewPath,
-  [string] $SnapshotFile
+  [string] $SnapshotFile,
+  [string[]] $DisabledProviders = $null
 )
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -26,12 +27,19 @@ $script:StateDir = Join-Path $env:LOCALAPPDATA 'tokenbar'
 $script:SnapshotPath = Join-Path $script:StateDir 'snapshot.json'
 if ($PreviewPath -and $SnapshotFile) { $script:SnapshotPath = $SnapshotFile }
 $script:RefreshFlagPath = Join-Path $script:StateDir 'refresh.flag'
+$script:ConfigPath = Join-Path $script:StateDir 'tray-config.json'
 $script:StartupLink = Join-Path ([Environment]::GetFolderPath('Startup')) 'TokenBar.lnk'
 $script:Snapshot = $null
 $script:SnapshotStamp = [datetime]::MinValue
 $script:Daemon = $null
 $script:CurrentIconHandle = [IntPtr]::Zero
 $script:LastRender = [datetime]::MinValue
+
+if ($PSBoundParameters.ContainsKey('DisabledProviders')) {
+  Set-DisabledProviders $DisabledProviders
+} else {
+  Read-TrayConfig $script:ConfigPath
+}
 
 $script:Colors = @{
   Background = [System.Drawing.Color]::FromArgb(17, 21, 29)
@@ -134,7 +142,12 @@ function Write-Panel {
 
   $providers = @(Get-VisibleProviders)
   if (-not $providers.Count) {
-    $Graphics.DrawString('Sem dados.', $script:Fonts.Body, $mutedBrush, [float] $pad, [float] $y)
+    $noDataMsg = if ($script:Snapshot -and $script:Snapshot.providers -and @($script:Snapshot.providers).Count -gt 0) {
+      'Nenhum provedor selecionado.'
+    } else {
+      'Sem dados.'
+    }
+    $Graphics.DrawString($noDataMsg, $script:Fonts.Body, $mutedBrush, [float] $pad, [float] $y)
   }
 
   foreach ($provider in $providers) {
@@ -335,6 +348,43 @@ $refreshItem.Add_Click({
   Start-Daemon
   New-Item -ItemType File -Path $script:RefreshFlagPath -Force | Out-Null
 })
+
+$script:ProvidersMenu = New-Object System.Windows.Forms.ToolStripMenuItem('Provedores')
+$knownProviders = @(
+  @{ Id = 'claude'; Label = 'Claude' },
+  @{ Id = 'codex'; Label = 'Codex' },
+  @{ Id = 'antigravity'; Label = 'Antigravity' }
+)
+
+foreach ($p in $knownProviders) {
+  $item = New-Object System.Windows.Forms.ToolStripMenuItem($p.Label)
+  $item.CheckOnClick = $true
+  $item.Tag = [string] $p.Id
+  $item.Checked = -not ($script:DisabledProviders -contains $p.Id)
+  $item.Add_Click({
+    param($sender, $e)
+    $id = [string] $sender.Tag
+    if ($sender.Checked) {
+      Set-DisabledProviders @($script:DisabledProviders | Where-Object { $_ -ne $id })
+    } else {
+      if (-not ($script:DisabledProviders -contains $id)) {
+        Set-DisabledProviders (@($script:DisabledProviders) + $id)
+      }
+    }
+    Save-TrayConfig $script:ConfigPath
+    Update-Tray
+  })
+  [void] $script:ProvidersMenu.DropDownItems.Add($item)
+}
+$script:ProvidersMenu.Add_DropDownOpening({
+  foreach ($item in $script:ProvidersMenu.DropDownItems) {
+    if ($item.Tag) {
+      $item.Checked = -not ($script:DisabledProviders -contains [string] $item.Tag)
+    }
+  }
+})
+[void] $script:Menu.Items.Add($script:ProvidersMenu)
+
 $script:StartupItem = $script:Menu.Items.Add('Iniciar com o Windows')
 $script:StartupItem.Checked = (Test-Path $script:StartupLink)
 $script:StartupItem.Add_Click({

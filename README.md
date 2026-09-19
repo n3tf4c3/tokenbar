@@ -97,11 +97,14 @@ wscript tray\tokenbar.vbs
 - `tray/tokenbar.ps1` **apenas lê** esse arquivo: desenha o ícone com o percentual mais
   crítico, o tooltip resumido e o painel com uma barra por janela e o tempo até a renovação.
   Ele nunca fala com Claude, Codex ou Antigravity diretamente.
-- Clique esquerdo abre o painel; clique direito traz "Atualizar agora", "Iniciar com o
-  Windows" e "Sair". "Atualizar agora" cria `refresh.flag` no diretório de estado, que o
-  daemon observa e consome.
+- Clique esquerdo abre o painel; clique direito traz "Atualizar agora", o submenu
+  "Provedores" (para habilitar ou desabilitar a exibição individual de Claude, Codex e
+  Antigravity), "Iniciar com o Windows" e "Sair". As preferências de provedores ativos são
+  salvas em `%LOCALAPPDATA%\tokenbar\tray-config.json` e refletem imediatamente no ícone, no
+  tooltip e no painel.
+- "Atualizar agora" cria `refresh.flag` no diretório de estado, que o daemon observa e consome.
 - `tray\tokenbar.ps1 -PreviewPath saida.png` renderiza o painel num PNG, sem abrir a GUI —
-  útil para testar o layout.
+  útil para testar o layout. Aceita também `-DisabledProviders @('antigravity')` para omitir provedores no preview.
 - "Iniciar com o Windows" cria/remove um atalho `TokenBar.lnk` na pasta de Inicialização
   do usuário.
 
@@ -112,7 +115,7 @@ wscript tray\tokenbar.vbs
 Na bandeja, o painel compacto mostra as barras, percentuais e tempo até a renovação.
 O indicador discreto `cache` e a cor cinza identificam dados antigos. Janelas vencidas
 ficam sem preenchimento até uma nova coleta, sem presumir 0%. O ícone mostra o maior
-percentual válido, ou `?` quando não há uma leitura atual.
+percentual válido entre os provedores habilitados, ou `?` quando não há uma leitura atual.
 
 Na seção Codex, `Spark 5h` e `Spark 7d` identificam as cotas próprias do Codex Spark
 quando o CLI as disponibiliza. `7d` é a janela semanal. Elas não são somadas à cota
@@ -121,7 +124,7 @@ principal do Codex; cada linha mantém seu percentual e horário de renovação.
 O Antigravity usa quatro linhas curtas: `Gem 5h`, `Gem sem`, `C/G 5h` e `C/G sem`.
 `Gem` é Gemini; `C/G` é Claude/GPT **dentro do Antigravity**, sem misturar essas cotas
 com as assinaturas Claude e Codex. No tooltip, se não couberem todas as janelas, aparece
-apenas o maior percentual de cada provedor.
+apenas o maior percentual de cada provedor habilitado.
 
 No painel da extensão, cada provedor mostra a **última coleta válida**, a idade do dado
 e a próxima tentativa. Se o Claude pedir **renovar sessão**, abra o Claude Code e use `/login`.

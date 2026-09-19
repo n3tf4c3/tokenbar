@@ -1,5 +1,52 @@
 # Funcoes de estado sem GUI, compartilhadas pela bandeja e pelos testes Windows.
 
+$script:DisabledProviders = @()
+
+function Get-DisabledProviders {
+  return @($script:DisabledProviders)
+}
+
+function Set-DisabledProviders {
+  param([string[]] $Providers)
+  if ($null -eq $Providers) {
+    $script:DisabledProviders = @()
+  } else {
+    $script:DisabledProviders = @($Providers | Where-Object { $_ -and $_.Trim() -ne '' })
+  }
+}
+
+function Read-TrayConfig {
+  param([string] $Path)
+  if (-not $Path -or -not (Test-Path $Path)) {
+    $script:DisabledProviders = @()
+    return
+  }
+  try {
+    $json = Get-Content -Raw -Path $Path -Encoding UTF8 | ConvertFrom-Json
+    if ($json.disabledProviders) {
+      $script:DisabledProviders = @($json.disabledProviders)
+    } else {
+      $script:DisabledProviders = @()
+    }
+  } catch {
+    $script:DisabledProviders = @()
+  }
+}
+
+function Save-TrayConfig {
+  param([string] $Path)
+  if (-not $Path) { return }
+  try {
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path $dir)) {
+      New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    @{ disabledProviders = @($script:DisabledProviders) } | ConvertTo-Json | Set-Content -Path $Path -Encoding UTF8
+  } catch {
+    # Falha ao salvar nao deve interromper o funcionamento
+  }
+}
+
 function ConvertTo-UsageTimestamp {
   param([string] $Value)
   $parsed = [DateTimeOffset]::MinValue
@@ -40,7 +87,11 @@ function Get-Countdown {
 }
 
 function Get-VisibleProviders {
-  if ($script:Snapshot) { return @($script:Snapshot.providers) }
+  if ($script:Snapshot) {
+    return @($script:Snapshot.providers | Where-Object {
+      -not ($script:DisabledProviders -contains [string] $_.provider)
+    })
+  }
 }
 
 function Test-WindowExpired {
@@ -79,7 +130,12 @@ function Get-WorstUsage {
 function Get-TooltipText {
   param([DateTimeOffset] $Now = [DateTimeOffset]::UtcNow)
   $providers = @(Get-VisibleProviders)
-  if (-not $providers.Count) { return 'TokenBar - sem dados' }
+  if (-not $providers.Count) {
+    if ($script:Snapshot -and $script:Snapshot.providers -and @($script:Snapshot.providers).Count -gt 0) {
+      return 'TokenBar - nenhum provedor selecionado'
+    }
+    return 'TokenBar - sem dados'
+  }
   $parts = foreach ($provider in $providers) {
     if (Test-ProviderAttention $provider $Now) {
       '{0}: indisponivel' -f $provider.label

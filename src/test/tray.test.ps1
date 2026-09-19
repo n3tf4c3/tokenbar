@@ -46,4 +46,39 @@ Assert-Equal (Get-WindowShortLabel $codex.windows[2]) 'Spark 7d' 'Spark weekly q
 Assert-Equal (Get-WorstUsage $now).usedPercent 92 'Spark can determine the tray percentage without being added to the Codex quota'
 $codex.windows[2].resetsAt = $now.AddMinutes(-1).ToString('o')
 Assert-Equal (Get-WorstUsage $now).usedPercent 40 'Expired Spark quota no longer controls the tray percentage'
+
+# Testes de filtragem de provedores
+$antigravity.status = 'ok'
+$script:Snapshot = [pscustomobject]@{providers=@($claude,$codex,$antigravity)}
+
+Set-DisabledProviders @('antigravity')
+$visible = @(Get-VisibleProviders)
+Assert-Equal $visible.Count 2 'Disabled provider is excluded from visible providers'
+Assert-Equal ($visible | Where-Object { $_.provider -eq 'antigravity' }) $null 'Antigravity is not in visible providers'
+Assert-Equal (Get-WorstUsage $now).usedPercent 40 'Worst usage ignores disabled provider'
+Assert-Equal ((Get-TooltipText $now) -match 'Antigravity') $false 'Tooltip does not include disabled provider'
+
+Set-DisabledProviders @('claude', 'codex', 'antigravity')
+Assert-Equal @(Get-VisibleProviders).Count 0 'All providers can be disabled'
+Assert-Equal (Get-WorstUsage $now) $null 'Worst usage is null when all providers are disabled'
+Assert-Equal (Get-TooltipText $now) 'TokenBar - nenhum provedor selecionado' 'Tooltip informs when all providers are deselected'
+
+# Teste de persistencia e leitura da configuracao
+$tempConfig = [System.IO.Path]::GetTempFileName()
+try {
+  Set-DisabledProviders @('claude', 'antigravity')
+  Save-TrayConfig $tempConfig
+  Set-DisabledProviders @()
+  Assert-Equal (Get-DisabledProviders).Count 0 'Disabled providers reset to empty'
+  Read-TrayConfig $tempConfig
+  $loaded = Get-DisabledProviders
+  Assert-Equal $loaded.Count 2 'Config restores saved disabled providers'
+  Assert-Equal ($loaded -contains 'claude') $true 'Config restores claude'
+  Assert-Equal ($loaded -contains 'antigravity') $true 'Config restores antigravity'
+} finally {
+  if (Test-Path $tempConfig) { Remove-Item $tempConfig -Force }
+}
+
+Set-DisabledProviders @()
+
 Write-Output "$passed Windows tray checks passed."
