@@ -88,8 +88,12 @@ indicador na bandeja:
 
 ```powershell
 npm run compile-daemon
-powershell -NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File tray\tokenbar.ps1
+Start-Process conhost -WindowStyle Hidden -ArgumentList '--headless','powershell','-NoProfile','-ExecutionPolicy','RemoteSigned','-WindowStyle','Hidden','-File','tray\tokenbar.ps1'
 ```
+
+(`conhost --headless` evita a janela do Windows Terminal que `-WindowStyle Hidden` sozinho
+deixa aberta — fechá-la encerraria a bandeja. Chamado direto de um console, o `conhost
+--headless` não sobe nada; por isso o `Start-Process`.)
 
 O TokenBar não usa `wscript`, `.vbs` nem `-ExecutionPolicy Bypass`: essa cadeia é a que
 antivírus tratam como script malicioso. Se o daemon morrer, a bandeja tenta subir de novo
