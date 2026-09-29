@@ -37,14 +37,13 @@ O TokenBar tem **três coletores** e **dois consumidores**. Todo o código de re
 | `src/collectors/antigravity.ts` | Executa `/usage` no CLI oficial, valida TSV, converte restante em usado e preserva cache/esperas. |
 | `src/http.ts` | HTTP com prazo total, cancelamento, limite de tamanho e resposta incompleta. |
 | `src/diagnostics.ts` | Log local com campos permitidos e rotação de dois arquivos de 256 KiB. |
-| `tray/state.ps1` | Cálculos de idade, tempo, avisos e filtros de provedores sem GUI, compartilhados com os testes. |
+| `tray/state.ps1` | Cálculos de idade, tempo, avisos, filtros de provedores e backoff de relançamento do daemon, sem GUI, compartilhados com os testes. |
 | `src/extension.ts` | Ponto de entrada do VS Code: barra de status, comandos, agendamento e persistência em `globalState`. |
 | `src/webview/render.ts` | Gera o HTML do painel a partir de um `UsageSnapshot`. **Puro**: não importa `vscode`, o que permite renderizá-lo fora do editor. |
 | `src/webview/dashboard.ts` | Cria e gerencia o `WebviewPanel` do VS Code, e trata a mensagem `refresh` vinda dele. Delega o HTML ao `render.ts`. |
 | `src/preview/dashboard.ts` | Ferramenta de documentação: escreve o HTML do painel em disco para virar captura. Equivalente ao `-PreviewPath` do tray. |
 | `src/daemon.ts` | Processo Node de vida longa que publica o snapshot em disco para a bandeja. |
 | `tray/tokenbar.ps1` | Indicador do Windows. Lê o snapshot e desenha ícone/tooltip/painel com GDI+, com menu para alternar provedores visíveis. |
-| `tray/tokenbar.vbs` | Sobe o PowerShell sem piscar console. |
 | `src/test/test.ts` | Suíte mínima, sem framework: asserções diretas com código de saída. |
 
 ## Contrato de dados

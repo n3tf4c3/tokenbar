@@ -88,8 +88,12 @@ indicador na bandeja:
 
 ```powershell
 npm run compile-daemon
-wscript tray\tokenbar.vbs
+powershell -NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File tray\tokenbar.ps1
 ```
+
+O TokenBar não usa `wscript`, `.vbs` nem `-ExecutionPolicy Bypass`: essa cadeia é a que
+antivírus tratam como script malicioso. Se o daemon morrer, a bandeja tenta subir de novo
+no máximo uma vez por minuto e desiste após 5 falhas seguidas; "Atualizar agora" recomeça.
 
 - `dist/daemon.js` mantém o `UsageManager` vivo — preservando o cache de 5 minutos e o
   backoff de 429 do Claude — e publica `%LOCALAPPDATA%\tokenbar\snapshot.json` de forma

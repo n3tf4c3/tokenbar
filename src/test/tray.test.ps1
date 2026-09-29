@@ -81,4 +81,20 @@ try {
 
 Set-DisabledProviders @()
 
+# Backoff de relancamento do daemon
+Assert-Equal (Test-DaemonStartAllowed $now.UtcDateTime) $true 'First daemon start is allowed immediately'
+Register-DaemonAttempt $now.UtcDateTime
+Assert-Equal (Test-DaemonStartAllowed $now.UtcDateTime.AddSeconds(3)) $false 'Daemon is not relaunched on the next 3 s tick'
+Assert-Equal (Test-DaemonStartAllowed $now.UtcDateTime.AddSeconds(60)) $true 'Daemon may be retried after a minute'
+1..4 | ForEach-Object { Register-DaemonExit ([timespan]::FromSeconds(2)) }
+Assert-Equal (Test-DaemonStartAllowed $now.UtcDateTime.AddHours(1)) $true 'Four short-lived daemons still allow a retry'
+Register-DaemonLaunchFailure
+Assert-Equal (Test-DaemonStartAllowed $now.UtcDateTime.AddHours(1)) $false 'Five consecutive failures stop the relaunch loop'
+Reset-DaemonBackoff
+Assert-Equal (Test-DaemonStartAllowed $now.UtcDateTime) $true 'Refresh now restarts the daemon after giving up'
+Register-DaemonExit ([timespan]::FromSeconds(2))
+Register-DaemonExit ([timespan]::FromMinutes(30))
+Assert-Equal $script:DaemonFailures 0 'A daemon that ran long enough clears the failure count'
+Reset-DaemonBackoff
+
 Write-Output "$passed Windows tray checks passed."

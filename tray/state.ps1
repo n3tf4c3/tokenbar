@@ -1,6 +1,39 @@
 # Funcoes de estado sem GUI, compartilhadas pela bandeja e pelos testes Windows.
 
 $script:DisabledProviders = @()
+$script:DaemonFailures = 0
+$script:DaemonLastAttempt = [datetime]::MinValue
+$script:DaemonRetrySeconds = 60
+$script:DaemonMaxFailures = 5
+$script:DaemonMinUptimeSeconds = 120
+
+# Um daemon que morre (ou não sobe) não pode ser relançado a cada tick de 3 s: cada
+# tentativa cria processos, e isso é o que antivírus comportamentais enxergam como loop.
+function Test-DaemonStartAllowed {
+  param([datetime] $Now = [datetime]::UtcNow)
+  if ($script:DaemonFailures -ge $script:DaemonMaxFailures) { return $false }
+  return (($Now - $script:DaemonLastAttempt).TotalSeconds -ge $script:DaemonRetrySeconds)
+}
+
+function Register-DaemonAttempt {
+  param([datetime] $Now = [datetime]::UtcNow)
+  $script:DaemonLastAttempt = $Now
+}
+
+# Vida curta conta como falha; um daemon que durou o bastante zera a contagem.
+function Register-DaemonExit {
+  param([timespan] $Uptime)
+  if ($Uptime.TotalSeconds -lt $script:DaemonMinUptimeSeconds) { $script:DaemonFailures++ } else { $script:DaemonFailures = 0 }
+}
+
+function Register-DaemonLaunchFailure {
+  $script:DaemonFailures++
+}
+
+function Reset-DaemonBackoff {
+  $script:DaemonFailures = 0
+  $script:DaemonLastAttempt = [datetime]::MinValue
+}
 
 function Get-DisabledProviders {
   return @($script:DisabledProviders)
