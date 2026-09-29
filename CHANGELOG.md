@@ -16,6 +16,13 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 - O relançamento do daemon deixa de ocorrer a cada 3 s: no máximo uma tentativa por
   minuto, com desistência após 5 falhas seguidas. "Atualizar agora" zera a contagem.
 
+### Log da bandeja
+
+- A bandeja grava `%LOCALAPPDATA%\tokenbar\tray.log` (rotacionado em 200 KB): início e
+  fim da bandeja, início e saída do daemon (com código) e exceções da interface ou do ciclo
+  de atualização. Um "iniciada" sem "encerrada normalmente" indica que o processo foi
+  morto por fora.
+
 ### Coleta silenciosa do Antigravity
 
 - Desativa o auto-updater do `agy` somente nos processos de consulta do TokenBar,

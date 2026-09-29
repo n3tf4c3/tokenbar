@@ -97,4 +97,19 @@ Register-DaemonExit ([timespan]::FromMinutes(30))
 Assert-Equal $script:DaemonFailures 0 'A daemon that ran long enough clears the failure count'
 Reset-DaemonBackoff
 
+# Log da bandeja
+$tempLog = Join-Path ([System.IO.Path]::GetTempPath()) ('tokenbar-test-{0}.log' -f [guid]::NewGuid())
+try {
+  Write-TrayLog $tempLog 'primeira'
+  Assert-Equal ((Get-Content $tempLog -Raw) -match "\[$PID\] primeira") $true 'Tray log records timestamp, pid and message'
+  Set-Content $tempLog ('x' * 210KB)
+  Write-TrayLog $tempLog 'depois da rotacao'
+  Assert-Equal (Test-Path ([System.IO.Path]::ChangeExtension($tempLog, 'previous.log'))) $true 'Oversized tray log is rotated'
+  Assert-Equal ((Get-Content $tempLog -Raw) -match 'depois da rotacao') $true 'Rotated tray log starts fresh'
+  Write-TrayLog 'Z:\pasta\inexistente\tray.log' 'ignorada'
+  Assert-Equal $true $true 'Unwritable log path never throws'
+} finally {
+  Remove-Item $tempLog, ([System.IO.Path]::ChangeExtension($tempLog, 'previous.log')) -Force -ErrorAction SilentlyContinue
+}
+
 Write-Output "$passed Windows tray checks passed."

@@ -35,6 +35,20 @@ function Reset-DaemonBackoff {
   $script:DaemonLastAttempt = [datetime]::MinValue
 }
 
+# A bandeja roda oculta: sem este log, uma morte inesperada não deixa rastro. Nunca lança.
+function Write-TrayLog {
+  param([string] $Path, [string] $Message)
+  if (-not $Path) { return }
+  try {
+    if ((Test-Path $Path) -and (Get-Item $Path).Length -gt 200KB) {
+      Move-Item $Path ([System.IO.Path]::ChangeExtension($Path, 'previous.log')) -Force
+    }
+    Add-Content -Path $Path -Encoding UTF8 -Value ('{0} [{1}] {2}' -f [datetime]::UtcNow.ToString('o'), $PID, $Message)
+  } catch {
+    # Falha ao registrar não deve interromper o funcionamento
+  }
+}
+
 function Get-DisabledProviders {
   return @($script:DisabledProviders)
 }
