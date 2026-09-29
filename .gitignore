@@ -18,3 +18,5 @@ refresh.flag
 Thumbs.db
 *.log
 dashboard-preview.html
+
+.ai-memory.toml
