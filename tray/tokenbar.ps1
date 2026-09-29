@@ -371,9 +371,10 @@ function Update-Tray {
 function Save-StartupLink {
   $shell = New-Object -ComObject WScript.Shell
   $link = $shell.CreateShortcut($script:StartupLink)
-  # O próprio powershell.exe oculta a janela; RemoteSigned dispensa Bypass para scripts locais.
-  $link.TargetPath = Join-Path $PSHOME 'powershell.exe'
-  $link.Arguments = ('-NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File "{0}"' -f $PSCommandPath)
+  # conhost --headless: com o Windows Terminal como terminal padrão, powershell.exe -WindowStyle Hidden
+  # abre uma janela dele (fechá-la mata a bandeja). RemoteSigned dispensa Bypass para scripts locais.
+  $link.TargetPath = Join-Path $env:SystemRoot 'System32\conhost.exe'
+  $link.Arguments = ('--headless "{0}" -NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File "{1}"' -f (Join-Path $PSHOME 'powershell.exe'), $PSCommandPath)
   $link.WorkingDirectory = $script:Root
   $link.WindowStyle = 7
   $link.Description = 'TokenBar'
@@ -440,8 +441,8 @@ $script:StartupItem.Add_Click({
   }
 })
 # Atalhos criados por versões antigas passavam por wscript + .vbs + -ExecutionPolicy Bypass,
-# cadeia que antivírus tratam como script malicioso.
-if ((Test-Path $script:StartupLink) -and (Get-StartupLinkTarget) -match 'wscript') { Save-StartupLink }
+# cadeia que antivírus tratam como script malicioso; os seguintes abriam uma janela do Windows Terminal.
+if ((Test-Path $script:StartupLink) -and (Get-StartupLinkTarget) -notmatch 'conhost') { Save-StartupLink }
 [void] $script:Menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 $exitItem = $script:Menu.Items.Add('Sair')
 $exitItem.Add_Click({ $script:Context.ExitThread() })
