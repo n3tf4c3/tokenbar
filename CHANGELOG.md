@@ -16,6 +16,13 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 - O relançamento do daemon deixa de ocorrer a cada 3 s: no máximo uma tentativa por
   minuto, com desistência após 5 falhas seguidas. "Atualizar agora" zera a contagem.
 
+### Bandeja sem janela de terminal
+
+- O atalho "Iniciar com o Windows" passa a chamar `conhost.exe --headless powershell.exe ...`.
+  Com o Windows Terminal como terminal padrão, `powershell.exe -WindowStyle Hidden`
+  deixava uma janela dele aberta, e fechá-la matava a bandeja. Atalhos anteriores são
+  reescritos na próxima abertura da bandeja.
+
 ### Log da bandeja
 
 - A bandeja grava `%LOCALAPPDATA%\tokenbar\tray.log` (rotacionado em 200 KB): início e

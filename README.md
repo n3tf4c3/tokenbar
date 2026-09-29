@@ -110,7 +110,10 @@ no máximo uma vez por minuto e desiste após 5 falhas seguidas; "Atualizar agor
 - `tray\tokenbar.ps1 -PreviewPath saida.png` renderiza o painel num PNG, sem abrir a GUI —
   útil para testar o layout. Aceita também `-DisabledProviders @('antigravity')` para omitir provedores no preview.
 - "Iniciar com o Windows" cria/remove um atalho `TokenBar.lnk` na pasta de Inicialização
-  do usuário.
+  do usuário. Ele chama `conhost.exe --headless powershell.exe ...`: com o Windows Terminal
+  como terminal padrão, `powershell.exe -WindowStyle Hidden` sozinho deixa uma janela dele
+  aberta, e fechá-la encerraria a bandeja.
+- Eventos e erros da bandeja ficam em `%LOCALAPPDATA%\tokenbar\tray.log`.
 
 > Extensão e bandeja mostram o mesmo número: o percentual **usado** na janela, igual ao
 > `/usage` do Claude Code. As faixas de cor também são as mesmas — verde abaixo de 70%,
