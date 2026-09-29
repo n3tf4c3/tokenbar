@@ -294,15 +294,26 @@ if ($PreviewPath) {
 
 function Start-Daemon {
   if ($script:Daemon -and -not $script:Daemon.HasExited) { return }
+  if (-not (Test-DaemonStartAllowed)) { return }
+  if ($script:Daemon) {
+    Register-DaemonExit ($script:Daemon.ExitTime - $script:Daemon.StartTime)
+    $script:Daemon = $null
+    if (-not (Test-DaemonStartAllowed)) { return }
+  }
+  Register-DaemonAttempt
   $node = Get-Command node -ErrorAction SilentlyContinue
   $nodePath = if ($node) { $node.Source } elseif (Test-Path 'C:\Program Files\nodejs\node.exe') { 'C:\Program Files\nodejs\node.exe' } else { $null }
-  if (-not $nodePath) { return }
+  if (-not $nodePath -or -not (Test-Path $script:DaemonScript)) { Register-DaemonLaunchFailure; return }
   $info = New-Object System.Diagnostics.ProcessStartInfo
   $info.FileName = $nodePath
   $info.Arguments = ('"{0}" {1}' -f $script:DaemonScript, $IntervalSeconds)
   $info.UseShellExecute = $false
   $info.CreateNoWindow = $true
-  $script:Daemon = [System.Diagnostics.Process]::Start($info)
+  try {
+    $script:Daemon = [System.Diagnostics.Process]::Start($info)
+  } catch {
+    Register-DaemonLaunchFailure
+  }
 }
 
 $script:Form = New-Object System.Windows.Forms.Form
@@ -342,9 +353,26 @@ function Update-Tray {
   }
 }
 
+function Save-StartupLink {
+  $shell = New-Object -ComObject WScript.Shell
+  $link = $shell.CreateShortcut($script:StartupLink)
+  # O próprio powershell.exe oculta a janela; RemoteSigned dispensa Bypass para scripts locais.
+  $link.TargetPath = Join-Path $PSHOME 'powershell.exe'
+  $link.Arguments = ('-NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File "{0}"' -f $PSCommandPath)
+  $link.WorkingDirectory = $script:Root
+  $link.WindowStyle = 7
+  $link.Description = 'TokenBar'
+  $link.Save()
+}
+
+function Get-StartupLinkTarget {
+  return (New-Object -ComObject WScript.Shell).CreateShortcut($script:StartupLink).TargetPath
+}
+
 $script:Menu = New-Object System.Windows.Forms.ContextMenuStrip
 $refreshItem = $script:Menu.Items.Add('Atualizar agora')
 $refreshItem.Add_Click({
+  Reset-DaemonBackoff
   Start-Daemon
   New-Item -ItemType File -Path $script:RefreshFlagPath -Force | Out-Null
 })
@@ -392,16 +420,13 @@ $script:StartupItem.Add_Click({
     Remove-Item $script:StartupLink -Force
     $script:StartupItem.Checked = $false
   } else {
-    $shell = New-Object -ComObject WScript.Shell
-    $link = $shell.CreateShortcut($script:StartupLink)
-    $link.TargetPath = 'wscript.exe'
-    $link.Arguments = ('\"{0}\"' -f (Join-Path $PSScriptRoot 'tokenbar.vbs'))
-    $link.WorkingDirectory = $script:Root
-    $link.Description = 'TokenBar'
-    $link.Save()
+    Save-StartupLink
     $script:StartupItem.Checked = $true
   }
 })
+# Atalhos criados por versões antigas passavam por wscript + .vbs + -ExecutionPolicy Bypass,
+# cadeia que antivírus tratam como script malicioso.
+if ((Test-Path $script:StartupLink) -and (Get-StartupLinkTarget) -match 'wscript') { Save-StartupLink }
 [void] $script:Menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 $exitItem = $script:Menu.Items.Add('Sair')
 $exitItem.Add_Click({ $script:Context.ExitThread() })

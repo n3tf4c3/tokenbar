@@ -27,7 +27,7 @@ Para a bandeja:
 
 ```powershell
 npm run compile-daemon
-wscript tray\tokenbar.vbs       # o próprio script sobe o daemon
+powershell -NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File tray\tokenbar.ps1   # o próprio script sobe o daemon
 ```
 
 O `tokenbar.ps1` inicia `dist\daemon.js` sozinho e o encerra ao sair — não suba o daemon

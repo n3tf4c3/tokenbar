@@ -7,6 +7,15 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não publicado]
 
+### Bandeja sem padrão de script malicioso
+
+- Remove `tokenbar.vbs`: a inicialização com o Windows deixa de passar por
+  `wscript` + `powershell -ExecutionPolicy Bypass`, cadeia marcada por antivírus.
+  O atalho chama direto `powershell.exe -ExecutionPolicy RemoteSigned -WindowStyle Hidden`,
+  e atalhos antigos são reescritos na próxima abertura da bandeja.
+- O relançamento do daemon deixa de ocorrer a cada 3 s: no máximo uma tentativa por
+  minuto, com desistência após 5 falhas seguidas. "Atualizar agora" zera a contagem.
+
 ### Coleta silenciosa do Antigravity
 
 - Desativa o auto-updater do `agy` somente nos processos de consulta do TokenBar,
