@@ -28,6 +28,8 @@ $script:SnapshotPath = Join-Path $script:StateDir 'snapshot.json'
 if ($PreviewPath -and $SnapshotFile) { $script:SnapshotPath = $SnapshotFile }
 $script:RefreshFlagPath = Join-Path $script:StateDir 'refresh.flag'
 $script:ConfigPath = Join-Path $script:StateDir 'tray-config.json'
+$script:LogPath = Join-Path $script:StateDir 'tray.log'
+$script:LastTickError = $null
 $script:StartupLink = Join-Path ([Environment]::GetFolderPath('Startup')) 'TokenBar.lnk'
 $script:Snapshot = $null
 $script:SnapshotStamp = [datetime]::MinValue
@@ -296,6 +298,7 @@ function Start-Daemon {
   if ($script:Daemon -and -not $script:Daemon.HasExited) { return }
   if (-not (Test-DaemonStartAllowed)) { return }
   if ($script:Daemon) {
+    Write-TrayLog $script:LogPath ('daemon encerrou (codigo {0}, apos {1:0}s)' -f $script:Daemon.ExitCode, ($script:Daemon.ExitTime - $script:Daemon.StartTime).TotalSeconds)
     Register-DaemonExit ($script:Daemon.ExitTime - $script:Daemon.StartTime)
     $script:Daemon = $null
     if (-not (Test-DaemonStartAllowed)) { return }
@@ -303,7 +306,11 @@ function Start-Daemon {
   Register-DaemonAttempt
   $node = Get-Command node -ErrorAction SilentlyContinue
   $nodePath = if ($node) { $node.Source } elseif (Test-Path 'C:\Program Files\nodejs\node.exe') { 'C:\Program Files\nodejs\node.exe' } else { $null }
-  if (-not $nodePath -or -not (Test-Path $script:DaemonScript)) { Register-DaemonLaunchFailure; return }
+  if (-not $nodePath -or -not (Test-Path $script:DaemonScript)) {
+    Write-TrayLog $script:LogPath 'daemon nao lancado: node ou dist\daemon.js ausente'
+    Register-DaemonLaunchFailure
+    return
+  }
   $info = New-Object System.Diagnostics.ProcessStartInfo
   $info.FileName = $nodePath
   $info.Arguments = ('"{0}" {1}' -f $script:DaemonScript, $IntervalSeconds)
@@ -311,10 +318,18 @@ function Start-Daemon {
   $info.CreateNoWindow = $true
   try {
     $script:Daemon = [System.Diagnostics.Process]::Start($info)
+    Write-TrayLog $script:LogPath ('daemon iniciado (pid {0})' -f $script:Daemon.Id)
   } catch {
+    Write-TrayLog $script:LogPath ('falha ao lancar o daemon: {0}' -f $_.Exception.Message)
     Register-DaemonLaunchFailure
   }
 }
+
+Write-TrayLog $script:LogPath 'bandeja iniciada'
+# Antes de criar qualquer janela: exceções da interface caem no log em vez de derrubar o processo.
+[System.Windows.Forms.Application]::SetUnhandledExceptionMode([System.Windows.Forms.UnhandledExceptionMode]::CatchException)
+[System.Windows.Forms.Application]::add_ThreadException({ param($sender, $e) Write-TrayLog $script:LogPath ('excecao na interface: ' + $e.Exception) })
+[System.AppDomain]::CurrentDomain.add_UnhandledException({ param($sender, $e) Write-TrayLog $script:LogPath ('excecao nao tratada: ' + $e.ExceptionObject) })
 
 $script:Form = New-Object System.Windows.Forms.Form
 $script:Form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
@@ -442,8 +457,17 @@ $script:Notify.Add_MouseClick({
 $script:Timer = New-Object System.Windows.Forms.Timer
 $script:Timer.Interval = 3000
 $script:Timer.Add_Tick({
-  Start-Daemon
-  if ((Read-Snapshot) -or $script:Form.Visible -or ([datetime]::UtcNow - $script:LastRender).TotalSeconds -ge 30) { Update-Tray }
+  try {
+    Start-Daemon
+    if ((Read-Snapshot) -or $script:Form.Visible -or ([datetime]::UtcNow - $script:LastRender).TotalSeconds -ge 30) { Update-Tray }
+  } catch {
+    # Um erro que se repete a cada 3 s é registrado uma vez só.
+    $text = $_.Exception.Message + ' @ ' + $_.ScriptStackTrace
+    if ($text -ne $script:LastTickError) {
+      $script:LastTickError = $text
+      Write-TrayLog $script:LogPath ('erro no ciclo de atualizacao: ' + $text)
+    }
+  }
 })
 
 Start-Daemon
@@ -453,6 +477,7 @@ $script:Timer.Start()
 
 $script:Context = New-Object System.Windows.Forms.ApplicationContext
 [System.Windows.Forms.Application]::Run($script:Context)
+Write-TrayLog $script:LogPath 'bandeja encerrada normalmente'
 
 $script:Timer.Stop()
 $script:Notify.Visible = $false
