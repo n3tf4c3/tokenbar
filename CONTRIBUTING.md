@@ -27,7 +27,7 @@ Para a bandeja:
 
 ```powershell
 npm run compile-daemon
-powershell -NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File tray\tokenbar.ps1   # o próprio script sobe o daemon
+Start-Process conhost -WindowStyle Hidden -ArgumentList '--headless','powershell','-NoProfile','-ExecutionPolicy','RemoteSigned','-WindowStyle','Hidden','-File','tray\tokenbar.ps1'   # sem janela; o próprio script sobe o daemon
 ```
 
 O `tokenbar.ps1` inicia `dist\daemon.js` sozinho e o encerra ao sair — não suba o daemon
