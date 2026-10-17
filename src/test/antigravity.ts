@@ -15,6 +15,7 @@ const output = [
   'Claude and GPT models\tWeekly Limit Remaining\t100%\t2026-09-13T03:00:00Z',
   'Claude and GPT models\tFive Hour Limit Remaining\t0%\t2026-09-06T08:00:00Z'
 ].join('\r\n');
+const argonOutput = 'Gemini 4 Argon\tGemini 4 Argon Weekly Limit\t77%\t2026-09-13T01:11:35Z';
 
 export async function runAntigravityTests(): Promise<number> {
   let passed = 0;
@@ -43,6 +44,54 @@ export async function runAntigravityTests(): Promise<number> {
       valid.replace('Weekly Limit Remaining', 'Unknown'), `${valid}\tunexpected`, `${valid}\n${valid}`, 'Warning: auth failed']) {
       assert.throws(() => parseAntigravityUsage(invalid), CollectionError);
     }
+  });
+
+  await check('Antigravity preserva a cota semanal própria do Argon junto das cotas legadas', () => {
+    const argon = parseAntigravityUsage(argonOutput);
+    assert.deepEqual(argon, [{
+      id: 'antigravity_gemini_4_argon_seven_day', label: 'Gemini 4 Argon · Semanal', shortLabel: 'Argon sem',
+      usedPercent: 23, durationMinutes: 10_080, resetsAt: '2026-09-13T01:11:35.000Z'
+    }]);
+    const mixed = parseAntigravityUsage(`${output}\r\n${argonOutput}`);
+    assert.equal(mixed.length, 5);
+    assert.deepEqual(mixed.find(window => window.id === argon[0].id), argon[0]);
+    assert.deepEqual(mixed.filter(window => window.id !== argon[0].id), parseAntigravityUsage(output));
+    assert.equal(new Set(mixed.map(window => window.id)).size, 5);
+  });
+
+  await check('Antigravity rejeita Argon malformado, duplicado ou com período incompatível', () => {
+    for (const invalid of [
+      argonOutput.replace('77%', 'NaN%'), argonOutput.replace('77%', '101%'),
+      argonOutput.replace('2026-09-13T01:11:35Z', 'invalid'),
+      argonOutput.replace('Gemini 4 Argon Weekly Limit', 'Weekly Limit Remaining'),
+      argonOutput.replace('Gemini 4 Argon Weekly Limit', 'Five Hour Limit Remaining'),
+      argonOutput.replace('Gemini 4 Argon\t', 'Gemini Models\t'),
+      `${argonOutput}\tunexpected`, `${argonOutput}\n${argonOutput}`
+    ]) {
+      assert.throws(() => parseAntigravityUsage(`${output}\n${invalid}`), CollectionError);
+    }
+  });
+
+  await check('Coleta recupera cache antigo e publica Argon no snapshot e no dashboard', async () => {
+    const previous: ProviderSnapshot = {
+      provider: 'antigravity', label: 'Antigravity', source: 'Antigravity CLI', status: 'error',
+      failureKind: 'invalid-response', stale: true, collectedAt: iso(NOW - 60_000),
+      windows: parseAntigravityUsage(output)
+    };
+    const legacyUnused = output.replace(/\t[\d.]+%\t/g, '\t100%\t');
+    const collector = new AntigravityCollector(previous, {
+      now: () => NOW, readUsage: async () => `${legacyUnused}\n${argonOutput}`
+    });
+    const provider = await collector.collect();
+    assert.equal(provider.status, 'ok'); assert.equal(provider.stale, undefined);
+    assert.equal(provider.failureKind, undefined); assert.equal(provider.collectedAt, iso(NOW));
+    assert.equal(provider.windows.length, 5);
+    const snapshot = { collectedAt: iso(NOW), providers: [provider] };
+    assert.deepEqual(restoreSnapshot(JSON.parse(JSON.stringify(snapshot))), snapshot);
+    const html = renderDashboard(snapshot, { interactive: false, now: NOW });
+    assert.ok(html.includes('Gemini 4 Argon · Semanal')); assert.ok(html.includes('23%'));
+    assert.equal(worstCurrentUsage(snapshot, NOW)?.window.id, 'antigravity_gemini_4_argon_seven_day');
+    assert.equal(worstCurrentUsage(snapshot, NOW)?.window.usedPercent, 23);
   });
 
   await check('Consulta do Antigravity inibe o updater no filho sem alterar o ambiente do chamador', async () => {

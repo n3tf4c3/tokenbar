@@ -200,6 +200,11 @@ períodos são `Five Hour Limit Remaining` e `Weekly Limit Remaining`. Grupos pa
 aceitos, mas campos inválidos, janelas duplicadas e formatos desconhecidos falham sem
 inventar cotas. O percentual restante é convertido uma única vez para usado.
 
+O formato também inclui a cota própria `Gemini 4 Argon` / `Gemini 4 Argon Weekly Limit`.
+Ela vira uma janela semanal independente (`antigravity_gemini_4_argon_seven_day`,
+`Argon sem` na bandeja), com percentual e renovação próprios, sem somar nem substituir
+as janelas do grupo `Gemini Models`.
+
 Os IDs distinguem grupo e período (`antigravity_gemini_five_hour`, por exemplo).
 `label` identifica ambos no dashboard; `shortLabel` permite `Gem 5h`, `Gem sem`, `C/G 5h`
 e `C/G sem` na bandeja, mantendo sua largura. Essas cotas não são somadas às de Claude/Codex.

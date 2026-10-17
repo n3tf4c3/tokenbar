@@ -23,8 +23,10 @@ export function parseAntigravityUsage(output: string): UsageWindow[] {
   const seen = new Set<string>();
   for (const line of output.trim().split(/\r?\n/).filter(line => line.trim())) {
     const fields = line.split('\t').map(field => field.trim());
-    const group = GROUPS.get(fields[0]);
-    const period = PERIODS.get(fields[1]);
+    // O Argon tem uma cota semanal própria, separada do grupo Gemini Models.
+    const argonWeekly = fields[0] === 'Gemini 4 Argon' && fields[1] === 'Gemini 4 Argon Weekly Limit';
+    const group = argonWeekly ? { id: 'gemini_4_argon', label: 'Gemini 4 Argon', short: 'Argon' } : GROUPS.get(fields[0]);
+    const period = PERIODS.get(argonWeekly ? 'Weekly Limit Remaining' : fields[1]);
     if (fields.length !== 4 || !group || !period || !/^\d+(?:\.\d+)?%$/.test(fields[2])
       || !/^\d{4}-\d{2}-\d{2}T/.test(fields[3])) {
       throw new CollectionError('O Antigravity retornou um formato de cotas desconhecido.', 'invalid-response');
