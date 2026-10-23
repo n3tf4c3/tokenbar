@@ -29,7 +29,8 @@ coletor.
 ## Requisitos
 
 - Para a extensão: VS Code `^1.75.0` (ou editor compatível com sua API de extensões).
-- Node.js 18+ para compilar e executar o daemon da bandeja.
+- Node.js em uma linha LTS com suporte para compilar, empacotar e executar o daemon da bandeja;
+  o CI valida na linha indicada em `.node-version` (24).
 - Para o provedor **Claude**: [Claude Code](https://claude.com/claude-code) instalado e com
   login feito (o TokenBar reaproveita a sessão OAuth já existente).
 - Para o provedor **Codex**: o CLI `codex` instalado e autenticado.

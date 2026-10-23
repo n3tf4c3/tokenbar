@@ -12,3 +12,5 @@ tray/**
 relatorios/**
 dist/preview.js
 docs/imagens/**
+.node-version
+.ai-memory.toml
