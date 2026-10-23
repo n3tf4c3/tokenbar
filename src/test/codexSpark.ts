@@ -1,4 +1,6 @@
 import * as assert from 'assert/strict';
+import { EventEmitter } from 'events';
+import { PassThrough } from 'stream';
 import { CodexCollector } from '../collectors/codex';
 import { restoreSnapshot, UsageSnapshot, worstCurrentUsage } from '../usage';
 import { UsageManager } from '../usageManager';
@@ -116,6 +118,57 @@ export async function runCodexSparkTests(): Promise<number> {
     const exeTarget = collector.resolveCodexTarget('C:\\dummy\\codex.exe');
     assert.equal(exeTarget.executable, 'C:\\dummy\\codex.exe');
     assert.deepEqual(exeTarget.args, []);
+  });
+
+  // Processo falso: o coletor real lê o protocolo, sem CLI, conta ou rede.
+  const collectFromOutput = async (output: string[]) => {
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true
+    });
+    const collector = new CodexCollector();
+    (collector as any).spawnCodex = () => child;
+    const uncaught: Error[] = [];
+    const onUncaught = (error: Error) => { uncaught.push(error); };
+    process.on('uncaughtException', onUncaught);
+    try {
+      const pending = collector.collect();
+      for (const chunk of output) {
+        child.stdout.write(chunk);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      const result = await pending;
+      await new Promise(resolve => setImmediate(resolve));
+      return { result, uncaught };
+    } finally {
+      process.off('uncaughtException', onUncaught);
+    }
+  };
+  const initialized = `${JSON.stringify({ id: 1, result: {} })}\n`;
+
+  await check('Envelope JSON que não é objeto não escapa da coleta do Codex (achado 1)', async () => {
+    const { result, uncaught } = await collectFromOutput(['null\n', '[]\n42\n"texto"\n', initialized,
+      `${JSON.stringify({ id: 2, result: { rateLimits: codex } })}\n`, 'null\n']);
+    assert.deepEqual(uncaught.map(error => error.message), []);
+    assert.equal(result.status, 'ok'); assert.equal(result.windows.length, 1);
+  });
+
+  await check('Resultado ou erro malformado do Codex vira falha controlada (achado 1)', async () => {
+    for (const reply of [{ id: 2, result: null }, { id: 2, result: [] }, { id: 2 }]) {
+      const { result, uncaught } = await collectFromOutput([initialized, `${JSON.stringify(reply)}\n`]);
+      assert.deepEqual(uncaught, []); assert.equal(result.status, 'error');
+      assert.equal(result.failureKind, 'invalid-response');
+    }
+    const generic = await collectFromOutput([`${JSON.stringify({ id: 2, error: 'texto' })}\n`]);
+    assert.equal(generic.result.message, 'Falha ao consultar os limites do Codex.');
+    const long = await collectFromOutput([`${JSON.stringify({ id: 2, error: { message: `Não\nautenticado ${'x'.repeat(500)}` } })}\n`]);
+    assert.ok(long.result.message!.startsWith('Não autenticado x')); assert.equal(long.result.message!.length, 200);
+  });
+
+  await check('Saída do Codex sem quebra de linha acima do limite falha sem esperar o timeout (achado 1)', async () => {
+    const started = Date.now();
+    const { result, uncaught } = await collectFromOutput(['x'.repeat(200 * 1024), 'x'.repeat(100 * 1024)]);
+    assert.deepEqual(uncaught, []); assert.equal(result.failureKind, 'invalid-response');
+    assert.match(result.message!, /limite de tamanho/); assert.ok(Date.now() - started < 5_000);
   });
   return passed;
 }

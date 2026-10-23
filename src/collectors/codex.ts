@@ -43,6 +43,23 @@ IF EXIST "%dp0%\node.exe" (
 )
 endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\node_modules\@openai\codex\bin\codex.js" %*`;
 
+// Teto por linha do protocolo: a resposta de limites tem poucos KB; sem ele uma saída
+// sem quebra de linha acumularia no buffer até o timeout.
+const MAX_LINE_LENGTH = 256 * 1024;
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+// A mensagem do provedor vai para o snapshot: só texto curto, em uma linha.
+function codexErrorMessage(error: unknown): string {
+  const message = isRecord(error) && typeof error.message === 'string' ? error.message.replace(/\s+/g, ' ').trim() : '';
+  if (!message) {
+    return 'Falha ao consultar os limites do Codex.';
+  }
+  return message.length > 200 ? `${message.slice(0, 199)}…` : message;
+}
+
 function normalizeNpmShim(value: string): string {
   return value.replace(/\s+/g, ' ').trim().toLowerCase();
 }
@@ -168,30 +185,52 @@ export class CodexCollector implements UsageCollector {
       child.stdin.on('error', () => finish(new CollectionError('A comunicação com o Codex foi interrompida.', 'network')));
       child.stderr.resume();
 
+      // O callback roda fora da Promise: uma exceção aqui viraria uncaughtException e
+      // derrubaria o daemon com os três provedores, então toda falha passa por finish.
       child.stdout.on('data', chunk => {
-        buffer += chunk.toString('utf8');
-        const lines = buffer.split(/\r?\n/);
-        buffer = lines.pop() ?? '';
-        for (const line of lines) {
-          if (!line.trim()) {
-            continue;
+        if (settled) {
+          return;
+        }
+        try {
+          buffer += chunk.toString('utf8');
+          const lines = buffer.split(/\r?\n/);
+          buffer = lines.pop() ?? '';
+          if ([buffer, ...lines].some(line => line.length > MAX_LINE_LENGTH)) {
+            finish(new CollectionError('A resposta do Codex excedeu o limite de tamanho.', 'invalid-response'));
+            return;
           }
-          let message: any;
-          try {
-            message = JSON.parse(line);
-          } catch {
-            continue;
-          }
-          if (message.id === 1 && message.result) {
-            child.stdin.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`);
-            child.stdin.write(`${JSON.stringify({ method: 'account/rateLimits/read', id: 2, params: null })}\n`);
-          } else if (message.id === 2) {
-            if (message.error) {
-              finish(new Error(message.error.message ?? 'Falha ao consultar os limites do Codex.'));
-            } else {
-              finish(undefined, message.result as RateLimitResponse);
+          for (const line of lines) {
+            if (settled) {
+              return;
+            }
+            if (!line.trim()) {
+              continue;
+            }
+            let message: unknown;
+            try {
+              message = JSON.parse(line);
+            } catch {
+              continue;
+            }
+            // Assim como as linhas que não são JSON, o que não é envelope JSON-RPC é ignorado.
+            if (!isRecord(message)) {
+              continue;
+            }
+            if (message.id === 1 && message.result) {
+              child.stdin.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`);
+              child.stdin.write(`${JSON.stringify({ method: 'account/rateLimits/read', id: 2, params: null })}\n`);
+            } else if (message.id === 2) {
+              if (message.error != null) {
+                finish(new Error(codexErrorMessage(message.error)));
+              } else if (isRecord(message.result)) {
+                finish(undefined, message.result as RateLimitResponse);
+              } else {
+                finish(new CollectionError('O Codex retornou uma resposta de limites inválida.', 'invalid-response'));
+              }
             }
           }
+        } catch {
+          finish(new CollectionError('O Codex retornou uma resposta inválida.', 'invalid-response'));
         }
       });
       child.on('error', () => finish(new Error('Não foi possível iniciar o Codex CLI.')));
