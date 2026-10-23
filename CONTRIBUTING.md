@@ -6,7 +6,7 @@ ser a menor que resolve o problema.
 ## Antes de escrever código
 
 - **Bug?** Abra uma issue com: versão do TokenBar, sistema operacional, provedor afetado
-  (Claude/Codex/Antigravity) e a mensagem exata que aparece no painel.
+  (Claude/Codex/Antigravity) e a mensagem exata que aparece no painel da bandeja.
 - **Falha de segurança?** Não abra issue. Siga [SECURITY.md](SECURITY.md).
 - **Funcionalidade nova?** Abra uma issue antes do PR. Um provedor novo ou uma mudança de
   interface vale discutir primeiro; correção de bug pode ir direto para o PR.
@@ -21,12 +21,10 @@ npm run compile
 npm test
 ```
 
-`F5` no VS Code abre uma janela de desenvolvimento com a extensão carregada.
-
 Para a bandeja:
 
 ```powershell
-npm run compile-daemon
+npm run compile
 Start-Process conhost -WindowStyle Hidden -ArgumentList '--headless','powershell','-NoProfile','-ExecutionPolicy','RemoteSigned','-WindowStyle','Hidden','-File','tray\tokenbar.ps1'   # sem janela; o próprio script sobe o daemon
 ```
 
@@ -36,10 +34,8 @@ coletor, rode `node dist\daemon.js 60` **sem** abrir a bandeja.
 
 ## Capturas da documentação
 
-As imagens do `README.md` são geradas pelo próprio projeto, não por screenshot manual — se
-você mudar o layout, regenere-as no mesmo PR.
-
-**Painel da bandeja** (`docs/imagens/bandeja-windows.png`):
+A imagem do `README.md` (`docs/imagens/bandeja-windows.png`) é gerada pelo próprio projeto,
+não por screenshot manual — se você mudar o layout, regenere-a no mesmo PR:
 
 ```powershell
 tray\tokenbar.ps1 -PreviewPath docs\imagens\bandeja-windows.png
@@ -47,22 +43,6 @@ tray\tokenbar.ps1 -PreviewPath docs\imagens\bandeja-windows.png
 
 Renderiza o painel e o ícone num PNG sem abrir a GUI. Use também para revisar mudanças de
 layout durante o desenvolvimento.
-
-**Painel da extensão** (`docs/imagens/painel-vscode.png`) — o webview só renderiza dentro
-do VS Code, então o caminho é gerar o HTML e fotografá-lo com um navegador headless:
-
-```powershell
-npm run compile-preview
-node dist\preview.js dashboard-preview.html
-& 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe' --headless --disable-gpu `
-  --hide-scrollbars --window-size=1240,800 `
-  --screenshot="$PWD\docs\imagens\painel-vscode.png" "file:///$PWD/dashboard-preview.html"
-```
-
-`dist/preview.js` usa o snapshot do daemon por padrão; passe um JSON como segundo argumento
-para renderizar um cenário específico (conta sem janelas, provedor em erro, dado `stale`).
-Ele chama `renderDashboard(..., { interactive: false })`, que omite o script do webview —
-o HTML abre em qualquer navegador.
 
 ## Estilo de código
 
@@ -74,9 +54,9 @@ O projeto não tem linter configurado; siga o que já está lá:
   campos de API em inglês.
 - Nada de dependências de runtime novas. Se precisar de uma, justifique na issue — a
   ausência delas é uma decisão de segurança, não um acaso.
-- `@types/vscode` e `@types/node` ficam **presos de propósito** na versão mais antiga que o
-  projeto suporta (`engines.vscode` e o Node do extension host, respectivamente). O
-  `npm outdated` sempre vai reclamar deles; não bumpe sem subir também o mínimo suportado.
+- `@types/node` fica **preso de propósito** numa versão antiga, para o typecheck não aceitar
+  API recente de Node. O `npm outdated` sempre vai reclamar dele; não bumpe sem decidir
+  também o Node mínimo do daemon.
   Tipos à frente do runtime fazem o typecheck aceitar API que não existe em produção.
 - Comentários só onde o "porquê" não é óbvio pelo código.
 
@@ -86,17 +66,15 @@ Essas não são preferência estética; quebrá-las quebra o comportamento do ap
 
 1. **`usedPercent` é sempre o percentual usado**, 0–100, passando por `clampPercent()`.
    Se a fonte retorna cota restante (Antigravity), converta uma vez no coletor. Nenhuma
-   camada de apresentação inverte o sinal: barra de status, painel e bandeja mostram esse número
-   direto, para bater com o `/usage` do Claude Code. As faixas de cor (70% âmbar, 90%
-   vermelho) estão duplicadas em `toneFor()` e `Get-Tone` — mexeu numa, mexa na outra.
+   camada de apresentação inverte o sinal: ícone, tooltip e painel da bandeja mostram esse
+   número direto, para bater com o `/usage` do Claude Code. As faixas de cor (70% âmbar, 90%
+   vermelho) ficam em `Get-Tone`, em `tray/tokenbar.ps1`.
 2. **Não remova o piso de 5 minutos nem o backoff de 429** do coletor Claude. Eles evitam
    martelar um endpoint não documentado.
 3. **Pré-requisito ausente é `unavailable`, não `error`.** Use o helper `unavailable()`.
    `error` fica para falha inesperada.
-4. **Todo texto vindo de um provedor passa por `escapeHtml()`** antes de entrar no HTML do
-   painel.
-5. **Nenhum token pode entrar em snapshot, log, `globalState` ou mensagem de erro.**
-6. **Antigravity só executa o `/usage` do CLI oficial**, com argumentos fixos, prazo e
+4. **Nenhum token pode entrar em snapshot, log ou mensagem de erro.**
+5. **Antigravity só executa o `/usage` do CLI oficial**, com argumentos fixos, prazo e
    limite de saída. Preserve o piso de 60 segundos e a espera de 5 minutos após `429`;
    não leia credenciais do Google nem crie um proxy de autenticação.
 
@@ -106,8 +84,8 @@ Essas não são preferência estética; quebrá-las quebra o comportamento do ap
 falhar. Adicione casos ali para qualquer lógica pura que você tocar (rotulagem de janelas,
 normalização de percentual, formatação de duração).
 
-Rode `npm test` e, no Windows, `npm run test:tray` antes de abrir o PR. O CI executa a
-suíte em Linux e Windows e os testes PowerShell no Windows.
+Rode `npm test` e `npm run test:tray` antes de abrir o PR. O CI executa as duas suítes no
+Windows.
 
 `src/test/regressions.ts` cobre falhas, cancelamento, recuperação, persistência de 429 e
 validação. Os testes usam credenciais sintéticas e HTTP em loopback, sem consultar contas
@@ -115,7 +93,8 @@ reais. `src/test/tray.test.ps1` importa `tray/state.ps1` sem iniciar a GUI nem o
 `src/test/antigravity.ts` cobre o TSV, conversão restante/usado, grupos, cache, reinício,
 limitação de consultas, erros sanitizados e isolamento do novo provedor, sem executar o CLI real.
 `src/test/codexSpark.ts` cobre a seleção e deduplicação dos limites Codex/Spark, respostas
-legadas, contas sem Spark, validação, recuperação, persistência e apresentação, com respostas sintéticas.
+legadas, contas sem Spark, validação, recuperação, persistência e o protocolo do app-server,
+com respostas sintéticas e processo falso.
 
 Para conferir a apresentação de cenários sintéticos:
 `tray\tokenbar.ps1 -PreviewPath saida.png -SnapshotFile exemplo.json`.

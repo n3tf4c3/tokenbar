@@ -2,9 +2,9 @@
 
 ## Visão geral
 
-O TokenBar tem **três coletores** e **dois consumidores**. Todo o código de rede/IPC vive em
-`src/collectors/`; a extensão do VS Code e o daemon da bandeja apenas embrulham o mesmo
-`UsageManager`.
+O TokenBar tem **três coletores** e **um consumidor**: o daemon da bandeja do Windows. Todo o
+código de rede/IPC vive em `src/collectors/`; o daemon só embrulha o `UsageManager` e publica
+o snapshot que a bandeja lê.
 
 ```
    UsageManager (dedupe de refresh + eventos independentes)
@@ -12,17 +12,17 @@ O TokenBar tem **três coletores** e **dois consumidores**. Todo o código de re
    ├── CodexCollector       → processo filho → codex app-server --stdio
    └── AntigravityCollector → processo filho → agy --print '/usage'
 
-   consumidores do UsageManager:
+   consumidor do UsageManager:
 
-   ┌────────────────────────┐          ┌──────────────────────────┐
-   │ extension.ts           │          │ daemon.ts                │
-   │ status bar + webview   │          │ escreve snapshot.json    │
-   └────────────────────────┘          └────────────┬─────────────┘
-                                                    │ arquivo
-                                       ┌────────────▼─────────────┐
-                                       │ tray/tokenbar.ps1        │
-                                       │ ícone + painel (só lê)   │
-                                       └──────────────────────────┘
+   ┌──────────────────────────┐
+   │ daemon.ts                │
+   │ escreve snapshot.json    │
+   └────────────┬─────────────┘
+                │ arquivo
+   ┌────────────▼─────────────┐
+   │ tray/tokenbar.ps1        │
+   │ ícone + painel (só lê)   │
+   └──────────────────────────┘
 ```
 
 ## Módulos
@@ -38,10 +38,6 @@ O TokenBar tem **três coletores** e **dois consumidores**. Todo o código de re
 | `src/http.ts` | HTTP com prazo total, cancelamento, limite de tamanho e resposta incompleta. |
 | `src/diagnostics.ts` | Log local com campos permitidos e rotação de dois arquivos de 256 KiB. |
 | `tray/state.ps1` | Cálculos de idade, tempo, avisos, filtros de provedores e backoff de relançamento do daemon, sem GUI, compartilhados com os testes. |
-| `src/extension.ts` | Ponto de entrada do VS Code: barra de status, comandos, agendamento e persistência em `globalState`. |
-| `src/webview/render.ts` | Gera o HTML do painel a partir de um `UsageSnapshot`. **Puro**: não importa `vscode`, o que permite renderizá-lo fora do editor. |
-| `src/webview/dashboard.ts` | Cria e gerencia o `WebviewPanel` do VS Code, e trata a mensagem `refresh` vinda dele. Delega o HTML ao `render.ts`. |
-| `src/preview/dashboard.ts` | Ferramenta de documentação: escreve o HTML do painel em disco para virar captura. Equivalente ao `-PreviewPath` do tray. |
 | `src/daemon.ts` | Processo Node de vida longa que publica o snapshot em disco para a bandeja. |
 | `tray/tokenbar.ps1` | Indicador do Windows. Lê o snapshot e desenha ícone/tooltip/painel com GDI+, com menu para alternar provedores visíveis. |
 | `src/test/test.ts` | Suíte mínima, sem framework: asserções diretas com código de saída. |
@@ -84,13 +80,11 @@ E cada `UsageWindow`:
 ```
 
 Regra de ouro: **`usedPercent` é sempre o percentual usado**, do coletor até a tela. Nenhuma
-camada de apresentação inverte o sinal — barra de status, painel da extensão e bandeja
-mostram `usedPercent` direto, para bater com o `/usage` do Claude Code.
+camada de apresentação inverte o sinal — ícone, tooltip e painel da bandeja mostram
+`usedPercent` direto, para bater com o `/usage` do Claude Code.
 
-As faixas de cor derivam do mesmo número e são iguais nas duas interfaces: verde abaixo de
-70%, âmbar a partir de 70%, vermelho a partir de 90%. Implementadas em `toneFor()`
-(`src/webview/render.ts`) e `Get-Tone` (`tray/tokenbar.ps1`) — são duas linguagens, então
-os cortes estão duplicados; ao mexer numa, mexa na outra.
+As faixas de cor derivam do mesmo número: verde abaixo de 70%, âmbar a partir de 70%,
+vermelho a partir de 90%. Implementadas em `Get-Tone` (`tray/tokenbar.ps1`).
 
 ### Distinção de estados
 
@@ -100,10 +94,10 @@ os cortes estão duplicados; ao mexer numa, mexa na outra.
 - `stale: true` — os valores são do cache. O estado da última falha permanece em `status`,
   `failureKind` e `message`; somente o cache do intervalo normal tem `status: 'ok'`.
 - O `collectedAt` por provedor preserva o horário da última leitura válida quando há cache.
-  O horário geral indica publicação do painel, não coleta de todos os serviços.
+  O horário geral indica publicação do snapshot, não coleta de todos os serviços.
 - Janelas vencidas deixam de determinar o ícone e ficam sem preenchimento. Na bandeja,
   dados sem coleta há 10 minutos ficam em cinza, com `cache` no cabeçalho do provedor.
-  Os avisos detalhados ficam no painel da extensão. As interfaces recalculam a idade localmente.
+  A bandeja recalcula a idade localmente.
 
 ## Fluxo de atualização
 
@@ -114,8 +108,7 @@ os cortes estão duplicados; ao mexer numa, mexa na outra.
 3. Cada provedor publica seu resultado assim que resolve. O prazo individual de 15 s
    aborta a consulta, publica o erro e libera novas coletas. Respostas atrasadas de uma
    consulta cancelada não substituem resultados posteriores.
-4. Na extensão, o listener atualiza a barra de status, o painel (se aberto) e o
-   `globalState`. No daemon, o listener grava `snapshot.json`.
+4. No daemon, o listener grava `snapshot.json`.
 
 O snapshot persistido é reinjetado no construtor do `UsageManager` na próxima inicialização,
 o que restaura o cache de Claude e Antigravity, `lastAttemptAt` e `nextRetryAt` de 429,
@@ -151,8 +144,7 @@ pacotes ligados e os layouts `vendor/.../bin` e `vendor/.../codex`. Isso evita t
 `cmd.exe` do shim npm quanto o Node intermediário e permite encerrar o processo final.
 Somente o shim npm padrão reconhecido é substituído: scripts `.cmd`/`.bat` personalizados
 rodam integralmente em um shell oculto, com o caminho entre aspas, preservando argumentos,
-ambiente e mudanças de diretório. JS desconhecido mantém o fallback Node, inclusive no
-extension host Electron. Os testes de Windows usam instalações e scripts sintéticos.
+ambiente e mudanças de diretório. JS desconhecido mantém o fallback Node. Os testes de Windows usam instalações e scripts sintéticos.
 
 O `codex app-server --stdio` fala JSON por linha (stdin/stdout):
 
@@ -178,7 +170,7 @@ preserva a chave do mapa. Reservas e outros limites não são adicionados ao par
 Spark é reconhecido pelo nome/ID contendo o termo `Spark` ou por `codex_bengalfox`, o ID
 observado no CLI com `limitName: "GPT-5.3-Codex-Spark"`. Continua no provedor `codex`, com
 IDs próprios nas janelas. A duração define `Spark 5h` e `Spark 7d` em `shortLabel`; o
-dashboard usa o nome completo do período. Não há segundo coletor, processo ou chamada.
+`label` guarda o nome completo do período. Não há segundo coletor, processo ou chamada.
 Contas sem janelas do Spark continuam mostrando apenas as cotas existentes, sem inventar zero.
 
 ## Coletor Antigravity: comando de cotas
@@ -206,7 +198,7 @@ Ela vira uma janela semanal independente (`antigravity_gemini_4_argon_seven_day`
 as janelas do grupo `Gemini Models`.
 
 Os IDs distinguem grupo e período (`antigravity_gemini_five_hour`, por exemplo).
-`label` identifica ambos no dashboard; `shortLabel` permite `Gem 5h`, `Gem sem`, `C/G 5h`
+`label` identifica ambos pelo nome completo; `shortLabel` permite `Gem 5h`, `Gem sem`, `C/G 5h`
 e `C/G sem` na bandeja, mantendo sua largura. Essas cotas não são somadas às de Claude/Codex.
 
 O processo tem timeout externo de 12 s, sinal de cancelamento e limite de saída de 64 KiB.
@@ -255,14 +247,12 @@ O backoff confirmado é persistido junto do snapshot.
 ## Decisões e trade-offs
 
 - **Sem dependências de runtime.** Só `https` e `child_process` do Node. Reduz superfície de
-  supply chain e mantém o `.vsix` pequeno.
+  supply chain e mantém o `dist/daemon.js` pequeno.
 - **Bundle com esbuild**, não `tsc`. Compilação em milissegundos, um arquivo por alvo.
 - **Suíte sem framework externo.** Unidades e regressões cobrem autenticação expirada,
   429, reinício, cache vencido, campos inválidos, prazo total, publicação independente e
   rotação de logs. Um servidor em loopback simula HTTP interrompido e lento; credenciais
-  são sintéticas. O CI roda em Linux e Windows, com testes PowerShell para a bandeja.
-- **HTML gerado por template string**, sem framework de webview. Todo dado externo passa por
-  `escapeHtml()` antes de ser interpolado.
+  são sintéticas. O CI roda no Windows, com testes PowerShell para a bandeja.
 - **Bandeja em PowerShell**, não num app nativo. Zero build extra no Windows, e o script é
   auditável por quem instala.
 - **Bandeja passiva.** Ela não coleta nem reautentica. Dados antigos são sinalizados mesmo
@@ -274,8 +264,5 @@ O backoff confirmado é persistido junto do snapshot.
 2. Use `clampPercent()` em todo percentual e `unavailable()` para pré-requisito ausente.
 3. Adicione o id ao union `ProviderId` e ao mapa `PROVIDER_LABELS` em `src/usage.ts`.
 4. Registre a instância no array `collectors` do `UsageManager`.
-5. Se a interface tiver cor própria, acrescente a regra `.provider.<id>:before` no CSS do
-   dashboard.
-
-Nenhuma alteração é necessária na barra de status, no daemon ou na bandeja — todos
-percorrem `snapshot.providers` genericamente.
+Nenhuma alteração é necessária no daemon ou na bandeja — os dois percorrem
+`snapshot.providers` genericamente.

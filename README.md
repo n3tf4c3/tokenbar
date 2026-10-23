@@ -9,9 +9,8 @@ confundi-la com as outras três coisas que costumam ser chamadas de "tokens":
 | Custo de chamadas feitas com chave de API | ❌ não |
 | Cota da assinatura em janelas móveis (5h, semanal) | ✅ sim |
 
-O TokenBar existe como **extensão do VS Code** e como **indicador na bandeja do Windows**,
-para quem usa Zed, Antigravity ou qualquer outro editor. Os dois compartilham o mesmo
-coletor.
+O TokenBar é um **indicador na bandeja do Windows**. Ele funciona ao lado de qualquer
+editor (VS Code, Zed, Antigravity ou outro), sem depender de nenhum deles.
 
 ## Sumário
 
@@ -19,7 +18,6 @@ coletor.
 - [Instalação](#instalação)
 - [Uso](#uso)
 - [Configuração](#configuração)
-- [Bandeja do Windows](#bandeja-do-windows)
 - [Como os dados são obtidos](#como-os-dados-são-obtidos)
 - [Privacidade e credenciais](#privacidade-e-credenciais)
 - [Desenvolvimento](#desenvolvimento)
@@ -28,67 +26,25 @@ coletor.
 
 ## Requisitos
 
-- Para a extensão: VS Code `^1.75.0` (ou editor compatível com sua API de extensões).
-- Node.js em uma linha LTS com suporte para compilar, empacotar e executar o daemon da bandeja;
+- Windows com PowerShell 5.1+.
+- Node.js em uma linha LTS com suporte para compilar e executar o daemon da bandeja;
   o CI valida na linha indicada em `.node-version` (24).
 - Para o provedor **Claude**: [Claude Code](https://claude.com/claude-code) instalado e com
   login feito (o TokenBar reaproveita a sessão OAuth já existente).
 - Para o provedor **Codex**: o CLI `codex` instalado e autenticado.
 - Para o provedor **Antigravity**: o [CLI oficial `agy`](https://antigravity.google/docs/cli/)
   instalado e autenticado, com suporte a `agy --print '/usage'`.
-- Para a bandeja: Windows com PowerShell 5.1+.
 
-Não é necessário instalar o VS Code para usar apenas a bandeja. Cada provedor é
-independente: um CLI ausente ou uma sessão expirada não impede a coleta dos demais.
+Cada provedor é independente: um CLI ausente ou uma sessão expirada não impede a coleta
+dos demais.
 
 ## Instalação
 
-Ainda não há publicação no Marketplace. Compile e instale o `.vsix` localmente:
+Compile o daemon e abra a bandeja:
 
 ```powershell
 npm install
 npm run compile
-npm run package
-code --install-extension tokenbar.vsix
-```
-
-## Uso
-
-![Painel da extensão: um cartão por provedor, cada janela de cota com barra, percentual usado e horário de renovação.](docs/imagens/painel-vscode.png)
-
-Depois de ativada, a extensão mostra na barra de status a janela **mais crítica** entre
-todos os provedores, no formato `Claude 84%` — onde o número é a cota já **usada** na janela.
-
-| Comando | Ação |
-| --- | --- |
-| `TokenBar: Open Dashboard` | Abre o painel com uma barra por janela |
-| `TokenBar: Atualizar cotas` | Solicita uma coleta, respeitando o intervalo de cada provedor |
-
-Clicar no indicador da barra de status também abre o painel.
-
-## Configuração
-
-| Chave | Tipo | Padrão | Faixa | Descrição |
-| --- | --- | --- | --- | --- |
-| `tokenbar.refreshInterval` | `integer` | `60` | 15–3600 | Intervalo, em segundos, entre coletas automáticas. |
-
-O intervalo vale para o agendamento local. Claude aplica um piso de 5 minutos e Antigravity
-de 60 segundos entre consultas (veja [Como os dados são obtidos](#como-os-dados-são-obtidos)).
-Baixar esse valor ou usar "Atualizar agora" não ultrapassa esses pisos.
-
-## Bandeja do Windows
-
-![Painel da bandeja do Windows: uma linha por janela de cota, com barra, percentual usado e tempo até a renovação. Abaixo, o ícone como aparece na bandeja.](docs/imagens/bandeja-windows.png)
-
-*Painel da bandeja. Embaixo, o ícone nos dois tamanhos que o Windows pede — ele mostra o
-percentual mais crítico e muda de cor conforme a cota aperta. Imagem gerada pelo próprio
-projeto com `tray\tokenbar.ps1 -PreviewPath`.*
-
-Para acompanhar as cotas fora do VS Code, o mesmo coletor roda como daemon e alimenta um
-indicador na bandeja:
-
-```powershell
-npm run compile-daemon
 Start-Process conhost -WindowStyle Hidden -ArgumentList '--headless','powershell','-NoProfile','-ExecutionPolicy','RemoteSigned','-WindowStyle','Hidden','-File','tray\tokenbar.ps1'
 ```
 
@@ -96,9 +52,19 @@ Start-Process conhost -WindowStyle Hidden -ArgumentList '--headless','powershell
 deixa aberta — fechá-la encerraria a bandeja. Chamado direto de um console, o `conhost
 --headless` não sobe nada; por isso o `Start-Process`.)
 
+Depois, use "Iniciar com o Windows" no menu da bandeja para abri-la a cada login.
+
 O TokenBar não usa `wscript`, `.vbs` nem `-ExecutionPolicy Bypass`: essa cadeia é a que
 antivírus tratam como script malicioso. Se o daemon morrer, a bandeja tenta subir de novo
 no máximo uma vez por minuto e desiste após 5 falhas seguidas; "Atualizar agora" recomeça.
+
+## Uso
+
+![Painel da bandeja do Windows: uma linha por janela de cota, com barra, percentual usado e tempo até a renovação. Abaixo, o ícone como aparece na bandeja.](docs/imagens/bandeja-windows.png)
+
+*Painel da bandeja. Embaixo, o ícone nos dois tamanhos que o Windows pede — ele mostra o
+percentual mais crítico e muda de cor conforme a cota aperta. Imagem gerada pelo próprio
+projeto com `tray\tokenbar.ps1 -PreviewPath`.*
 
 - `dist/daemon.js` mantém o `UsageManager` vivo — preservando o cache de 5 minutos e o
   backoff de 429 do Claude — e publica `%LOCALAPPDATA%\tokenbar\snapshot.json` de forma
@@ -120,11 +86,10 @@ no máximo uma vez por minuto e desiste após 5 falhas seguidas; "Atualizar agor
   aberta, e fechá-la encerraria a bandeja.
 - Eventos e erros da bandeja ficam em `%LOCALAPPDATA%\tokenbar\tray.log`.
 
-> Extensão e bandeja mostram o mesmo número: o percentual **usado** na janela, igual ao
-> `/usage` do Claude Code. As faixas de cor também são as mesmas — verde abaixo de 70%,
-> âmbar a partir de 70%, vermelho a partir de 90%.
+> O número é o percentual **usado** na janela, igual ao `/usage` do Claude Code. As faixas
+> de cor são verde abaixo de 70%, âmbar a partir de 70% e vermelho a partir de 90%.
 
-Na bandeja, o painel compacto mostra as barras, percentuais e tempo até a renovação.
+O painel compacto mostra as barras, percentuais e tempo até a renovação.
 O indicador discreto `cache` e a cor cinza identificam dados antigos. Janelas vencidas
 ficam sem preenchimento até uma nova coleta, sem presumir 0%. O ícone mostra o maior
 percentual válido entre os provedores habilitados, ou `?` quando não há uma leitura atual.
@@ -138,10 +103,18 @@ O Antigravity usa quatro linhas curtas: `Gem 5h`, `Gem sem`, `C/G 5h` e `C/G sem
 com as assinaturas Claude e Codex. No tooltip, se não couberem todas as janelas, aparece
 apenas o maior percentual de cada provedor habilitado.
 
-No painel da extensão, cada provedor mostra a **última coleta válida**, a idade do dado
-e a próxima tentativa. Se o Claude pedir **renovar sessão**, abra o Claude Code e use `/login`.
-Para Codex ou Antigravity, renove o login no CLI correspondente. O TokenBar tenta novamente
-nos ciclos seguintes, sem modificar arquivos de login.
+Se o Claude pedir para renovar a sessão, abra o Claude Code e use `/login`. Para Codex ou
+Antigravity, renove o login no CLI correspondente. O TokenBar tenta novamente nos ciclos
+seguintes, sem modificar arquivos de login.
+
+## Configuração
+
+O intervalo entre coletas automáticas é de 60 segundos. Para outro valor (15–3600), abra a
+bandeja com `tray\tokenbar.ps1 -IntervalSeconds <segundos>`; ela repassa o valor ao daemon.
+
+Claude aplica um piso de 5 minutos e Antigravity de 60 segundos entre consultas (veja
+[Como os dados são obtidos](#como-os-dados-são-obtidos)). Baixar o intervalo ou usar
+"Atualizar agora" não ultrapassa esses pisos.
 
 ## Como os dados são obtidos
 
@@ -242,13 +215,12 @@ a instalação e o login no CLI oficial. Não copie credenciais para o TokenBar.
 - A autenticação de Codex e Antigravity é feita pelos próprios CLIs. O TokenBar não
   registra a saída bruta do Antigravity nem URLs de login; as mensagens de falha são locais.
 - Não há telemetria. Não há servidor do TokenBar.
-- O painel e o snapshot em disco recebem apenas: percentuais, horários de renovação, nome
+- O painel da bandeja e o snapshot em disco recebem apenas: percentuais, horários de renovação, nome
   do plano e mensagens de diagnóstico.
 - O snapshot fica em `%LOCALAPPDATA%\tokenbar\snapshot.json`, com as permissões padrão do
   perfil do usuário.
 
-Os diagnósticos ficam em `%LOCALAPPDATA%\tokenbar\diagnostics.jsonl`; a extensão usa
-seu diretório `globalStorage`. Há dois arquivos de até 256 KiB cada, com rotação automática.
+Os diagnósticos ficam em `%LOCALAPPDATA%\tokenbar\diagnostics.jsonl`. Há dois arquivos de até 256 KiB cada, com rotação automática.
 Eles registram estado, duração e horários de coleta/tentativa, sem tokens, mensagens
 remotas, headers ou corpos de resposta.
 
@@ -259,24 +231,19 @@ Detalhes completos, incluindo superfície de ataque e como reportar vulnerabilid
 
 ```powershell
 npm install
-npm run compile      # extensão + daemon
+npm run compile      # daemon (dist/daemon.js)
 npm test             # unidades e regressões de coleta
 npm run test:tray     # testes Windows, sem abrir a GUI
 ```
-
-Pressione `F5` no VS Code para abrir uma janela de desenvolvimento da extensão.
 
 Scripts disponíveis:
 
 | Script | O que faz |
 | --- | --- |
-| `npm run compile` | Compila extensão e daemon |
-| `npm run compile-extension` | Só `dist/extension.js` |
-| `npm run compile-daemon` | Só `dist/daemon.js` |
-| `npm run compile-preview` | Só `dist/preview.js`, o gerador de capturas do painel |
-| `npm run watch` | Recompila a extensão a cada alteração |
+| `npm run compile` | Compila o daemon em `dist/daemon.js` (alias: `compile-daemon`) |
+| `npm run watch` | Recompila o daemon a cada alteração |
 | `npm test` | Compila e roda `src/test/test.ts` |
-| `npm run package` | Gera `tokenbar.vsix` |
+| `npm run test:tray` | Testes PowerShell da bandeja, sem abrir a GUI |
 
 Veja [CONTRIBUTING.md](CONTRIBUTING.md) para o fluxo de contribuição e
 [docs/arquitetura.md](docs/arquitetura.md) para o desenho dos módulos.

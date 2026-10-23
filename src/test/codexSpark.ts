@@ -2,9 +2,8 @@ import * as assert from 'assert/strict';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
 import { CodexCollector } from '../collectors/codex';
-import { restoreSnapshot, UsageSnapshot, worstCurrentUsage } from '../usage';
+import { restoreSnapshot, UsageSnapshot } from '../usage';
 import { UsageManager } from '../usageManager';
-import { renderDashboard } from '../webview/render';
 
 const NOW = Date.parse('2026-09-06T03:00:00Z');
 const primary = { usedPercent: 40, windowDurationMins: 300, resetsAt: NOW / 1000 + 5 * 3600 };
@@ -98,15 +97,11 @@ export async function runCodexSparkTests(): Promise<number> {
     await manager.refresh(); assert.equal(manager.getSnapshot().providers[0].status, 'ok');
   });
 
-  await check('Dashboard, persistência e maior uso reconhecem as janelas do Spark', async () => {
+  await check('Persistência preserva as janelas do Spark', async () => {
     const provider = await fixture({ rateLimits: codex, rateLimitsByLimitId: { codex_bengalfox: spark } }).collect();
     const snapshot: UsageSnapshot = { collectedAt: provider.collectedAt, providers: [provider] };
     const restored = restoreSnapshot(JSON.parse(JSON.stringify(snapshot)))!;
     assert.equal(restored.providers[0].windows[2].shortLabel, 'Spark 7d');
-    const html = renderDashboard(restored, { interactive: false, now: NOW });
-    assert.ok(html.includes('Janela de 5 horas · Spark')); assert.ok(html.includes('Janela semanal · Spark'));
-    assert.ok(html.includes('62% usado')); assert.equal(worstCurrentUsage(restored, NOW)?.window.id, 'codex_bengalfox_secondary');
-    assert.equal(worstCurrentUsage(restored, NOW + 8 * 86400_000), undefined);
   });
 
   await check('resolveCodexTarget preserva fallback JS desconhecido e executável direto', async () => {

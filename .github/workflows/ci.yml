@@ -12,10 +12,7 @@ permissions:
 jobs:
   build:
     name: Compilar e testar
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@v5
@@ -38,8 +35,4 @@ jobs:
         run: npm test
 
       - name: Testar estado e contagem de tempo da bandeja
-        if: runner.os == 'Windows'
         run: npm run test:tray
-
-      - name: Empacotar extensão
-        run: npm run package

@@ -7,9 +7,8 @@ import { ClaudeCollector, ClaudeHttpError, MIN_REFRESH_MS, parseClaudeUsage, par
 import { CodexCollector } from '../collectors/codex';
 import { createDiagnosticLogger } from '../diagnostics';
 import { requestJson } from '../http';
-import { clampPercent, CollectionError, isProviderOutdated, parseReset, ProviderSnapshot, restoreSnapshot, worstCurrentUsage } from '../usage';
+import { clampPercent, CollectionError, parseReset, ProviderSnapshot, restoreSnapshot } from '../usage';
 import { UsageManager } from '../usageManager';
-import { renderDashboard } from '../webview/render';
 
 const NOW = Date.parse('2026-09-05T13:00:00Z');
 const iso = (value: number) => new Date(value).toISOString();
@@ -72,8 +71,6 @@ export async function runRegressionTests(): Promise<number> {
     const result = await collector.collect(true);
     assert.equal(result.status, 'unavailable'); assert.equal(result.failureKind, 'auth'); assert.equal(result.stale, true);
     assert.equal(result.collectedAt, previous.collectedAt); assert.deepEqual(result.windows, previous.windows); assert.equal(requests, 0);
-    const html = renderDashboard({ collectedAt: iso(NOW), providers: [result] }, { interactive: false, now: NOW });
-    assert.ok(html.includes('/login')); assert.ok(html.includes('Última coleta válida')); assert.ok(html.includes('Último: 93%'));
     expired = false;
     assert.equal((await collector.collect()).status, 'ok'); assert.equal(requests, 1);
   });
@@ -123,17 +120,6 @@ export async function runRegressionTests(): Promise<number> {
     assert.equal(failed.windows[0].usedPercent, 93); assert.equal(failed.collectedAt, previous.collectedAt);
     now += MIN_REFRESH_MS; invalid = false;
     assert.equal((await collector.collect()).windows[0].usedPercent, 21);
-  });
-
-  await check('janela vencida deixa de preencher a barra e de determinar o maior uso', () => {
-    const expired = fixture(); expired.windows[0].resetsAt = iso(NOW - 3600_000);
-    const codex = fixture('codex'); codex.windows[0].usedPercent = 31;
-    const snapshot = { collectedAt: iso(NOW), providers: [expired, codex] };
-    assert.equal(worstCurrentUsage(snapshot, NOW)?.window.usedPercent, 31);
-    const html = renderDashboard(snapshot, { interactive: false, now: NOW });
-    assert.ok(html.includes('Último: 93%')); assert.ok(html.includes('Janela vencida'));
-    assert.ok(!html.includes('width:93%'));
-    assert.equal(isProviderOutdated(expired, NOW + 4 * 60_000), true);
   });
 
   await check('snapshot legado é aceito e campos de cota corrompidos são descartados', () => {

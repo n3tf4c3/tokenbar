@@ -2,9 +2,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ClaudeCollector, claudeThrottleReason, MIN_REFRESH_MS } from '../collectors/claude';
 import { CodexCollector } from '../collectors/codex';
-import { clampPercent, UsageSnapshot } from '../usage';
+import { clampPercent } from '../usage';
 import { VERSION } from '../version';
-import { renderDashboard } from '../webview/render';
 import { runRegressionTests } from './regressions';
 import { runAntigravityTests } from './antigravity';
 import { runCodexSparkTests } from './codexSpark';
@@ -53,47 +52,6 @@ async function run(): Promise<void> {
   assert(claudeThrottleReason(agora, agora - MIN_REFRESH_MS, 0) === undefined, 'passados 5 minutos, a consulta é liberada');
   assert(claudeThrottleReason(agora, 0, agora + 600_000) === 'backoff', 'o backoff de 429 bloqueia mesmo sem tentativa recente');
   assert(claudeThrottleReason(agora, 0, agora - 1) === undefined, 'backoff vencido não bloqueia');
-
-  const snapshotDeTeste: UsageSnapshot = {
-    collectedAt: new Date().toISOString(),
-    providers: [{
-      provider: 'claude',
-      label: 'Claude',
-      status: 'ok',
-      source: 'Claude Code OAuth',
-      collectedAt: new Date().toISOString(),
-      windows: [{ id: 'five_hour', label: '<img src=x onerror=alert(1)>', usedPercent: 30 }]
-    }]
-  };
-
-  const htmlInterativo = renderDashboard(snapshotDeTeste);
-  const htmlPreview = renderDashboard(snapshotDeTeste, { interactive: false });
-
-  assert(!htmlInterativo.includes('<img src=x'), 'rótulo vindo do provedor é escapado no HTML');
-  assert(htmlInterativo.includes('&lt;img src=x'), 'rótulo escapado aparece como texto');
-  assert(/script-src 'nonce-[^']+'/.test(htmlInterativo), 'painel do VS Code declara CSP com nonce');
-  assert(htmlInterativo.includes('acquireVsCodeApi'), 'painel do VS Code inclui o script de refresh');
-  assert(htmlPreview.includes("script-src 'none'"), 'preview declara CSP sem script');
-  assert(!htmlPreview.includes('acquireVsCodeApi'), 'preview não chama a API do VS Code');
-  assert(htmlInterativo.includes('30% usado'), 'painel mostra o percentual usado, como a bandeja');
-  assert(!htmlInterativo.includes('restante'), 'painel não fala mais em restante');
-
-  const tons: UsageSnapshot = {
-    collectedAt: new Date().toISOString(),
-    providers: [{
-      provider: 'codex', label: 'Codex', status: 'ok', source: 'Codex app-server',
-      collectedAt: new Date().toISOString(),
-      windows: [
-        { id: 'a', label: 'tranquila', usedPercent: 69 },
-        { id: 'b', label: 'atencao', usedPercent: 70 },
-        { id: 'c', label: 'critica', usedPercent: 90 }
-      ]
-    }]
-  };
-  const htmlTons = renderDashboard(tons);
-  assert(htmlTons.includes('width:69%') && /healthy">69% usado/.test(htmlTons), 'abaixo de 70% usado fica verde');
-  assert(/warning">70% usado/.test(htmlTons), 'a partir de 70% usado fica âmbar, como a bandeja');
-  assert(/danger">90% usado/.test(htmlTons), 'a partir de 90% usado fica vermelho, como a bandeja');
 
   // Testes do coletor Claude
   const claudeCached = new ClaudeCollector({

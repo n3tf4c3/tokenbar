@@ -3,9 +3,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { AntigravityCollector, ANTIGRAVITY_REFRESH_MS, antigravityCliFailure, parseAntigravityUsage } from '../collectors/antigravity';
-import { CollectionError, ProviderSnapshot, restoreSnapshot, worstCurrentUsage } from '../usage';
+import { CollectionError, ProviderSnapshot, restoreSnapshot } from '../usage';
 import { UsageManager } from '../usageManager';
-import { renderDashboard } from '../webview/render';
 
 const NOW = Date.parse('2026-09-06T03:00:00Z');
 const iso = (time: number) => new Date(time).toISOString();
@@ -88,10 +87,6 @@ export async function runAntigravityTests(): Promise<number> {
     assert.equal(provider.windows.length, 5);
     const snapshot = { collectedAt: iso(NOW), providers: [provider] };
     assert.deepEqual(restoreSnapshot(JSON.parse(JSON.stringify(snapshot))), snapshot);
-    const html = renderDashboard(snapshot, { interactive: false, now: NOW });
-    assert.ok(html.includes('Gemini 4 Argon · Semanal')); assert.ok(html.includes('23%'));
-    assert.equal(worstCurrentUsage(snapshot, NOW)?.window.id, 'antigravity_gemini_4_argon_seven_day');
-    assert.equal(worstCurrentUsage(snapshot, NOW)?.window.usedPercent, 23);
   });
 
   await check('Consulta do Antigravity inibe o updater no filho sem alterar o ambiente do chamador', async () => {
@@ -211,13 +206,10 @@ export async function runAntigravityTests(): Promise<number> {
     }
   });
 
-  await check('Snapshot e dashboard preservam Antigravity como provedor independente', async () => {
+  await check('Snapshot preserva Antigravity como provedor independente', async () => {
     const provider = await new AntigravityCollector(undefined, { now: () => NOW, readUsage: async () => output }).collect();
     const snapshot = { collectedAt: iso(NOW), providers: [provider] };
     assert.deepEqual(restoreSnapshot(snapshot), snapshot);
-    const html = renderDashboard(snapshot, { interactive: false, now: NOW });
-    assert.ok(html.includes('provider antigravity')); assert.ok(html.includes('Claude/GPT · 5 horas'));
-    assert.equal(worstCurrentUsage(snapshot, NOW)?.provider.provider, 'antigravity');
     for (const invalidId of ['unknown', '__proto__', ['antigravity']]) {
       assert.equal(restoreSnapshot({ ...snapshot, providers: [{ ...provider, provider: invalidId }] })?.providers.length, 0);
     }

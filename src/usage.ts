@@ -1,7 +1,6 @@
 export type ProviderId = 'claude' | 'codex' | 'antigravity';
 export const PROVIDER_LABELS: Record<ProviderId, string> = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
 export type FailureKind = 'auth' | 'rate-limit' | 'network' | 'timeout' | 'invalid-response';
-export const MAX_DATA_AGE_MS = 10 * 60 * 1000;
 
 export class CollectionError extends Error {
   public constructor(message: string, public readonly kind: FailureKind) { super(message); }
@@ -79,35 +78,6 @@ export function parseReset(value: unknown): string | undefined {
     throw new CollectionError('O serviço retornou um horário de renovação inválido.', 'invalid-response');
   }
   return new Date(value).toISOString();
-}
-
-export function isWindowExpired(window: UsageWindow, now = Date.now()): boolean {
-  return window.resetsAt !== undefined && (!Number.isFinite(Date.parse(window.resetsAt)) || Date.parse(window.resetsAt) <= now);
-}
-
-export function isProviderOutdated(provider: ProviderSnapshot, now = Date.now()): boolean {
-  const collected = Date.parse(provider.collectedAt);
-  return provider.status !== 'ok' || !Number.isFinite(collected) || now - collected >= MAX_DATA_AGE_MS;
-}
-
-export function providerNeedsAttention(provider: ProviderSnapshot, now = Date.now()): boolean {
-  return isProviderOutdated(provider, now) || !provider.windows.length || provider.windows.some(window => isWindowExpired(window, now));
-}
-
-export function worstCurrentUsage(snapshot: UsageSnapshot, now = Date.now()): { provider: ProviderSnapshot; window: UsageWindow } | undefined {
-  return snapshot.providers.filter(provider => !isProviderOutdated(provider, now))
-    .flatMap(provider => provider.windows.filter(window => !isWindowExpired(window, now)).map(window => ({ provider, window })))
-    .sort((a, b) => b.window.usedPercent - a.window.usedPercent)[0];
-}
-
-export function formatAge(value: string, now = Date.now()): string {
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) { return 'horário desconhecido'; }
-  const minutes = Math.max(0, Math.floor((now - timestamp) / 60_000));
-  if (!minutes) { return 'há menos de 1 min'; }
-  if (minutes < 60) { return `há ${minutes} min`; }
-  if (minutes < 1440) { return `há ${Math.floor(minutes / 60)}h ${minutes % 60}min`; }
-  return `há ${Math.floor(minutes / 1440)}d ${Math.floor(minutes % 1440 / 60)}h`;
 }
 
 /** Snapshots antigos continuam compatíveis; conteúdo corrompido nunca vira cota válida. */

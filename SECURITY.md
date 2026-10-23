@@ -30,7 +30,6 @@ severidade. Este é um projeto pessoal sem SLA formal — o compromisso é de me
 | `codex app-server --stdio` | Processo filho | Consultar `account/rateLimits/read` |
 | `agy --print /usage --print-timeout 10s` | Processo filho nativo | Ler cotas pelo comando oficial do Antigravity |
 | `%LOCALAPPDATA%\tokenbar\` | Leitura/escrita | Publicar e ler o snapshot do daemon |
-| `globalState` do VS Code | Leitura/escrita | Cache do último snapshot entre sessões |
 | Pasta de Inicialização do usuário | Escrita opcional | Atalho "Iniciar com o Windows" da bandeja |
 
 Nada além disso. Não há telemetria, não há servidor do TokenBar, não há coleta analítica.
@@ -40,7 +39,7 @@ Nada além disso. Não há telemetria, não há servidor do TokenBar, não há c
 - O token OAuth do Claude é lido do disco a cada coleta, mantido apenas em memória durante
   a requisição e usado somente no header `Authorization` da chamada a `api.anthropic.com`.
 - O token **não** é gravado em disco pelo TokenBar, **não** entra no snapshot, **não** entra
-  no `globalState`, **não** é registrado em log e **não** é enviado a nenhum outro host.
+  em diagnóstico, **não** é registrado em log e **não** é enviado a nenhum outro host.
 - O TokenBar nunca grava nem modifica `~/.claude/.credentials.json`.
 - Codex e Antigravity autenticam dentro dos próprios CLIs. O TokenBar só consulta os
   limites; não lê nem exporta as credenciais do Google.
@@ -55,7 +54,7 @@ gravado com as permissões padrão do perfil do usuário — ou seja, legível p
 já rodam com a sua conta. Trate o nome do plano como a informação mais sensível ali.
 
 O diagnóstico local usa `diagnostics.jsonl` e `diagnostics.previous.jsonl`, cada um com
-até 256 KiB. A extensão grava no seu `globalStorage`. Uma lista explícita de campos limita
+até 256 KiB, em `%LOCALAPPDATA%	okenbar`. Uma lista explícita de campos limita
 o conteúdo a estado, categoria da falha, duração e horários. Headers, corpos de resposta,
 mensagens remotas e credenciais não são registrados. Não há envio de logs pela rede.
 
@@ -83,15 +82,14 @@ O mesmo vale, em menor grau, para `account/rateLimits/read` do `codex app-server
 
 | Vetor | Situação |
 | --- | --- |
-| Dependências de runtime | Nenhuma. A extensão e o daemon são bundles sem `node_modules` em produção. |
-| Webview do painel | HTML gerado no host; todo texto vindo dos provedores passa por escape de HTML antes de ser interpolado. |
+| Dependências de runtime | Nenhuma. O daemon é um bundle sem `node_modules` em produção. |
 | Execução de processo | `codex app-server --stdio` e `agy --print /usage --print-timeout 10s`, encontrados em diretórios de instalação ou PATH. Argumentos fixos, nunca dados remotos; Antigravity usa executável nativo sem shell, timeout de 12 s e limite de saída de 64 KiB. |
-| Resposta dos provedores | Percentuais passam por `clampPercent` (0–100); campos textuais são escapados; JSON inválido vira mensagem de erro, não exceção. |
-| Script da bandeja | PowerShell local que **só lê** o snapshot; não faz rede nem lê credenciais. |
+| Resposta dos provedores | Percentuais passam por `clampPercent` (0–100); textos remotos são reduzidos ou trocados por mensagens locais; JSON inválido vira mensagem de erro, não exceção. |
+| Script da bandeja | PowerShell local que **só lê** o snapshot e desenha o texto com GDI+ (sem HTML); não faz rede nem lê credenciais. |
 
 ## Boas práticas para quem instala
 
-- Instale a partir do código-fonte ou de um `.vsix` que você mesmo gerou.
+- Instale a partir do código-fonte, compilando o daemon você mesmo.
 - Se sua sessão do Claude Code for comprometida, revogue-a no provedor — o TokenBar não
   guarda cópia do token, então basta refazer o login.
 - Em máquina compartilhada, lembre que `%LOCALAPPDATA%\tokenbar\snapshot.json` fica legível

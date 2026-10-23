@@ -7,6 +7,22 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não publicado]
 
+### Somente bandeja do Windows
+
+- Remove a extensão do VS Code: barra de status, painel webview, comandos
+  `tokenbar.openDashboard`/`tokenbar.refresh`, a configuração `tokenbar.refreshInterval`,
+  o gerador de capturas `dist/preview.js` e o empacotamento `.vsix` (`@vscode/vsce` e
+  `@types/vscode` saem das dependências). O TokenBar passa a ser só o daemon e a bandeja.
+- O intervalo de coleta continua configurável por `tray\tokenbar.ps1 -IntervalSeconds`.
+- O CI roda apenas no Windows, sem o passo de empacotamento.
+
+### Achados da auditoria de 21/10/2026
+
+- O coletor Codex valida o envelope do app-server: uma linha JSON que não é objeto não
+  derruba mais o daemon, `result` malformado vira falha controlada, cada linha tem teto de
+  256 KiB e a mensagem de erro do provedor é reduzida a uma linha curta.
+- CI em Node 24 LTS via `.node-version`, no lugar do Node 20 fora de suporte.
+
 ### Bandeja sem padrão de script malicioso
 
 - Remove `tokenbar.vbs`: a inicialização com o Windows deixa de passar por
