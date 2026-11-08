@@ -32,10 +32,10 @@ A alteração local anterior (adendo 30/10) foi preservada; cópia inicial em ev
 
 | ID | Severidade | Status | Título e evidência |
 |---|---|---|---|
-| #4 | Baixa | ABERTO; reproduzido em fixture | Cancelamento do coletor encerra o wrapper, mas pode deixar o descendente ativo. src/collectors/codex.ts:171–184,257–267,280–317; src/daemon.ts:94. Detalhes e limites no relatório. |
-| #5 | Baixa | ABERTO (potencial) | Autostart pressupõe powershell.exe dentro do host PowerShell atual. tray/tokenbar.ps1:1,371–381; README.md:29,48. Detalhes e limites no relatório. |
-| #6 | Baixa | ABERTO (potencial) | Teste de falha de log usa um caminho fora da fixture. src/test/tray.test.ps1:109; tray/state.ps1:39–47. Detalhes e limites no relatório. |
-| #7 | Baixa | ABERTO (potencial) | Cotas detalhadas do painel não têm representação semântica de acessibilidade. tray/tokenbar.ps1:180,199,203,334–345,363; tray/state.ps1:177–210. Detalhes e limites no relatório. |
+| #4 | Baixa | RESOLVIDO (08/11/2026) | Cancelamento do coletor encerra o wrapper, mas pode deixar o descendente ativo. src/collectors/codex.ts:171–184,257–267,280–317; src/daemon.ts:94. Detalhes e limites no relatório. |
+| #5 | Baixa | RESOLVIDO (08/11/2026) | Autostart pressupõe powershell.exe dentro do host PowerShell atual. tray/tokenbar.ps1:1,371–381; README.md:29,48. Detalhes e limites no relatório. |
+| #6 | Baixa | RESOLVIDO (08/11/2026) | Teste de falha de log usa um caminho fora da fixture. src/test/tray.test.ps1:109; tray/state.ps1:39–47. Detalhes e limites no relatório. |
+| #7 | Baixa | PARCIAL (08/11/2026; falta validar com o Narrador) | Cotas detalhadas do painel não têm representação semântica de acessibilidade. tray/tokenbar.ps1:180,199,203,334–345,363; tray/state.ps1:177–210. Detalhes e limites no relatório. |
 
 Quatro achados novos baixos, nenhum crítico/alto/médio. #1–#3 permanecem resolvidos no código; patch efetivo do runner remoto não atestado nesta rodada. Próximo ID: **8**.
 
@@ -45,3 +45,15 @@ Sem daemon/tray/CLI real, credenciais, estado externo, serviço de conta, GUI/Na
 
 A revisão automática bloqueou a remoção de `%TEMP%\codex-auditoria-tokenbar-20261106` (`blocked by policy`) antes da execução. Pasta retida com helpers/fixtures/cache; nenhum processo próprio ativo e nenhum contorno do bloqueio. Memória registrada em default/tokenbar.
 
+## Resolução — 08/11/2026 (achados 4–7)
+
+Commits locais na `main`, sem push nem release. Detalhes, falsificação e pendências estão no adendo de 08/11 do relatório `auditoria-2026-11-06.md`.
+
+| ID | Status | Resolução |
+|---|---|---|
+| #4 | RESOLVIDO | `src/collectors/codex.ts` `stopProcessTree`: ao fim da coleta, se o processo iniciado ainda não saiu, roda `taskkill /T /F /PID` só com o PID que a coleta criou (com `kill()` como fallback). Cobre wrapper `.cmd`/`.bat`, fallback JS e binário direto, em resposta, erro, timeout e cancelamento. Commit `54fd6c9`. Dois testes com wrapper `.cmd` e descendente sintético falham contra o código anterior. |
+| #5 | RESOLVIDO | `Resolve-StartupHost`/`Test-StartupLinkCurrent` (`tray/state.ps1`) e `Save-StartupLink` (`tray/tokenbar.ps1`): o atalho usa o Windows PowerShell do sistema ou o `pwsh.exe` em uso, não é criado sem host existente, e a opção só é marcada se o `.lnk` foi gravado. Atalhos para host inexistente são refeitos. Commit `58af2a1`. Testes só com pastas da fixture; o cenário PowerShell 7 foi simulado, porque não havia `pwsh` instalado. |
+| #6 | RESOLVIDO | `src/test/tray.test.ps1`: toda escrita da suíte fica numa pasta exclusiva sob o TEMP, removida com validação de pai e prefixo; o cenário inválido usa um arquivo como pasta-pai. Commit `17072b8`. Um mutante do logger que lança faz o teste falhar. |
+| #7 | PARCIAL | `Get-PanelAccessibleText` (`tray/state.ps1`) e `Update-PanelAccessibility` (`tray/tokenbar.ps1`): o painel expõe em `Form.Text`/`AccessibleName`, a cada atualização, cada janela de cota com percentual e renovação por provedor. O teste confere o nome lido pelo UI Automation. Commit `af88cb5`. Pendente: validação com o Narrador. |
+
+Validação: `tsc --noEmit` PASS, `npm run compile` PASS, 71 testes TypeScript PASS (eram 69) e 62 checks PowerShell PASS (eram 41). Sem lint configurado. Pendências: reiniciar a bandeja para carregar a versão nova; validar o #7 com o Narrador; push e CI remoto dependem de autorização.
