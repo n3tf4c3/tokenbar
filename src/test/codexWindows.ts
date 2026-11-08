@@ -171,6 +171,64 @@ export async function runCodexWindowsTests(): Promise<number> {
           assert.equal(result.cwd, fixture.prefix);
         });
       }
+
+      // Achado 4: o wrapper morre no kill(), mas o app-server que ele iniciou não.
+      // Os processos são todos da fixture; o descendente se encerra sozinho em 8 s,
+      // e o teste só espera por ele, nunca encerra um PID por conta própria.
+      const alive = (pid: number) => {
+        try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
+      };
+      const waitFor = async <T>(probe: () => T | undefined, timeoutMs: number): Promise<T | undefined> => {
+        const deadline = Date.now() + timeoutMs;
+        for (;;) {
+          const value = probe();
+          if (value !== undefined || Date.now() > deadline) { return value; }
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+      };
+      for (const mode of ['cancel', 'respond'] as const) {
+        await check(`Codex encerra o app-server descendente de um wrapper .cmd (${mode === 'cancel' ? 'cancelamento' : 'resposta concluída'}, achado 4)`, async () => {
+          const prefix = path.join(directory, `descendant ${mode}`);
+          const pidFile = path.join(prefix, 'descendant.pid');
+          const resetsAt = Math.floor(Date.now() / 1000) + 3600;
+          write(path.join(prefix, 'server.js'), [
+            `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));`,
+            'setTimeout(() => process.exit(0), 8000);',
+            // Ignora o EOF do stdin, como um app-server travado.
+            mode === 'respond' ? [
+              'let buffer = "";',
+              'process.stdin.on("data", chunk => {',
+              '  buffer += chunk; const lines = buffer.split("\\n"); buffer = lines.pop();',
+              '  for (const line of lines) { if (!line.trim()) continue; const message = JSON.parse(line);',
+              '    if (message.id === 1) process.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\\n");',
+              `    if (message.id === 2) process.stdout.write(JSON.stringify({ id: 2, result: { rateLimits: { limitId: "codex", primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: ${resetsAt} } } } }) + "\\n"); }`,
+              '});'
+            ].join('\n') : 'process.stdin.resume();'
+          ].join('\n'));
+          const command = write(path.join(prefix, 'codex.cmd'), ['@echo off', `"${process.execPath}" "%~dp0server.js" %*`].join('\r\n'));
+          const local = new CodexCollector() as any;
+          local.findCodexOnWindows = () => command;
+          const controller = new AbortController();
+          let pid: number | undefined;
+          try {
+            const pending = local.collect(false, controller.signal) as Promise<import('../usage').ProviderSnapshot>;
+            pid = await waitFor(() => fs.existsSync(pidFile) ? Number(fs.readFileSync(pidFile, 'utf8')) || undefined : undefined, 10_000);
+            assert.ok(pid, 'o descendente da fixture não iniciou');
+            if (mode === 'cancel') { controller.abort(); }
+            const result = await pending;
+            if (mode === 'cancel') {
+              assert.equal(result.failureKind, 'timeout');
+            } else {
+              assert.equal(result.status, 'ok', result.message);
+              assert.equal(result.windows[0].usedPercent, 12);
+            }
+            const stopped = await waitFor(() => alive(pid!) ? undefined : true, 3_000);
+            assert.equal(stopped, true, `o descendente ${pid} continuou ativo depois da coleta`);
+          } finally {
+            if (pid) { await waitFor(() => alive(pid!) ? undefined : true, 10_000); }
+          }
+        });
+      }
     }
   } finally {
     assert.equal(path.dirname(path.resolve(directory)), path.resolve(os.tmpdir()));

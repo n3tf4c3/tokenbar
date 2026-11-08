@@ -23,6 +23,12 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
   256 KiB e a mensagem de erro do provedor é reduzida a uma linha curta.
 - CI em Node 24 LTS via `.node-version`, no lugar do Node 20 fora de suporte.
 
+### Achados da auditoria de 06/11/2026
+
+- Ao fim de cada coleta, o coletor Codex encerra no Windows a árvore de processos que ele
+  mesmo iniciou: um wrapper `.cmd`/`.bat` ou o fallback JS não deixa mais o app-server
+  descendente vivo após timeout ou cancelamento.
+
 ### Bandeja sem padrão de script malicioso
 
 - Remove `tokenbar.vbs`: a inicialização com o Windows deixa de passar por

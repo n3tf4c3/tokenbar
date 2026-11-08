@@ -1,4 +1,4 @@
-import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
+import { ChildProcess, ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import * as fs from 'fs';
 import { createRequire } from 'module';
 import * as os from 'os';
@@ -66,6 +66,31 @@ function normalizeNpmShim(value: string): string {
 
 function isFile(filename: string): boolean {
   try { return fs.statSync(filename).isFile(); } catch { return false; }
+}
+
+/**
+ * No Windows, kill() encerra só o processo direto. Com um wrapper .cmd/.bat ou o
+ * fallback JS, o app-server é descendente e sobreviveria ao timeout (achado 4). O
+ * taskkill /T parte apenas do PID que esta coleta criou, e só enquanto o Node ainda não
+ * viu esse processo sair: o handle aberto pelo Node impede que o PID seja reutilizado.
+ */
+function stopProcessTree(child: ChildProcess): void {
+  if (child.exitCode != null || child.signalCode != null) {
+    return;
+  }
+  if (process.platform !== 'win32' || !child.pid) {
+    child.kill();
+    return;
+  }
+  const taskkill = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
+  const fallback = () => { if (child.exitCode == null && child.signalCode == null) { child.kill(); } };
+  try {
+    const killer = spawn(taskkill, ['/T', '/F', '/PID', String(child.pid)], { windowsHide: true, stdio: 'ignore' });
+    killer.on('error', fallback);
+    killer.on('exit', code => { if (code !== 0) { fallback(); } });
+  } catch {
+    fallback();
+  }
 }
 
 function isSparkLimit(snapshot: RateLimitSnapshot): boolean {
@@ -176,7 +201,7 @@ export class CodexCollector implements UsageCollector {
         clearTimeout(timer);
         signal?.removeEventListener('abort', abort);
         child.stdin.end();
-        setTimeout(() => child.kill(), 250);
+        setTimeout(() => stopProcessTree(child), 250);
         error ? reject(error) : resolve(value!);
       };
       const abort = () => finish(new CollectionError('A consulta do Codex foi cancelada.', 'timeout'));

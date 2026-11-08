@@ -158,6 +158,10 @@ O `codex app-server --stdio` fala JSON por linha (stdin/stdout):
 
 O buffer de stdout é fatiado por linha, com o resto parcial preservado entre chunks. Assim
 que a resposta `id: 2` chega, o processo é encerrado — não fica um app-server pendurado.
+Ao fim de cada coleta (resposta, falha, timeout ou cancelamento), o stdin é fechado e,
+250 ms depois, se o processo iniciado ainda não saiu, o Windows encerra a árvore a partir
+dele (`taskkill /T /F /PID`, só com o PID que a própria coleta criou). Assim um wrapper
+`.cmd`/`.bat` ou o fallback JS não deixa o app-server descendente vivo.
 
 Timeout de 12 s. `finish()` é idempotente: erro, sucesso, `exit` e timeout competem, e só
 o primeiro vale.
