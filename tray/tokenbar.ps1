@@ -344,11 +344,21 @@ $script:Form.GetType().GetProperty('DoubleBuffered', [System.Reflection.BindingF
 $script:Form.Add_Paint({ Write-Panel $_.Graphics $script:Form.ClientSize.Width $script:Form.ClientSize.Height })
 $script:Form.Add_Deactivate({ $script:Form.Hide() })
 
+# O conteúdo é pintado com GDI+, sem controles que um leitor de tela enxergue. O UI Automation
+# anuncia como nome da janela o texto dela (invisível: o painel não tem barra de título),
+# então o mesmo conteúdo, em texto, vai para Text e AccessibleName a cada atualização.
+function Update-PanelAccessibility {
+  $text = 'TokenBar, cotas das assinaturas. ' + (Get-PanelAccessibleText)
+  $script:Form.Text = $text
+  $script:Form.AccessibleName = $text
+}
+
 function Show-Panel {
   $script:Form.Height = Get-PanelHeight
   $screen = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position)
   $area = $screen.WorkingArea
   $script:Form.Location = New-Object System.Drawing.Point (($area.Right - $script:Form.Width - 12), ($area.Bottom - $script:Form.Height - 12))
+  Update-PanelAccessibility
   $script:Form.Invalidate()
   $script:Form.Show()
   $script:Form.Activate()
@@ -361,6 +371,7 @@ function Update-Tray {
   $script:CurrentIconHandle = $handle
   if ($previous -ne [IntPtr]::Zero) { [void] [TokenBar.Native]::DestroyIcon($previous) }
   $script:Notify.Text = Get-TooltipText
+  Update-PanelAccessibility
   $script:LastRender = [datetime]::UtcNow
   if ($script:Form.Visible) {
     $script:Form.Height = Get-PanelHeight

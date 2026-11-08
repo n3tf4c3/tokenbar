@@ -195,6 +195,40 @@ function Get-WorstUsage {
   return $worst
 }
 
+# O painel e desenhado com GDI+, sem controles que um leitor de tela enxergue. Este texto
+# repete o conteudo de cada linha (janela, percentual usado e renovacao) e vira o nome
+# acessivel do painel a cada atualizacao (Update-PanelAccessibility, em tokenbar.ps1).
+function Get-PanelAccessibleText {
+  param([DateTimeOffset] $Now = [DateTimeOffset]::UtcNow)
+  $providers = @(Get-VisibleProviders)
+  if (-not $providers.Count) {
+    if ($script:Snapshot -and $script:Snapshot.providers -and @($script:Snapshot.providers).Count -gt 0) {
+      return 'Nenhum provedor selecionado.'
+    }
+    return 'Sem dados.'
+  }
+  $parts = foreach ($provider in $providers) {
+    $name = [string] $provider.label
+    $tags = @()
+    if ($provider.plan) { $tags += 'plano ' + $provider.plan }
+    if ($provider.stale -or (Test-ProviderOutdated $provider $Now)) { $tags += 'dados em cache' }
+    if ($tags.Count) { $name += ' (' + ($tags -join ', ') + ')' }
+    if (-not $provider.windows) {
+      '{0}: sem dados.' -f $name
+    } else {
+      $rows = foreach ($window in @($provider.windows)) {
+        $label = if ($window.label) { [string] $window.label } else { Get-WindowShortLabel $window }
+        $row = '{0}, {1:0}% usado' -f $label, [double] $window.usedPercent
+        $countdown = Get-Countdown ([string] $window.resetsAt) $Now
+        if ($countdown) { $row += ', ' + $countdown }
+        $row
+      }
+      '{0}: {1}.' -f $name, ($rows -join '; ')
+    }
+  }
+  return ($parts -join ' ')
+}
+
 function Get-TooltipText {
   param([DateTimeOffset] $Now = [DateTimeOffset]::UtcNow)
   $providers = @(Get-VisibleProviders)

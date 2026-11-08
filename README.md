@@ -91,7 +91,10 @@ projeto com `tray\tokenbar.ps1 -PreviewPath`.*
 > O número é o percentual **usado** na janela, igual ao `/usage` do Claude Code. As faixas
 > de cor são verde abaixo de 70%, âmbar a partir de 70% e vermelho a partir de 90%.
 
-O painel compacto mostra as barras, percentuais e tempo até a renovação.
+O painel compacto mostra as barras, percentuais e tempo até a renovação. Como ele é
+desenhado, e não montado com controles, o mesmo conteúdo vai em texto para leitores de
+tela: o nome da janela do painel lista, por provedor, cada janela com o percentual usado
+e a renovação, atualizado a cada leitura do snapshot.
 O indicador discreto `cache` e a cor cinza identificam dados antigos. Janelas vencidas
 ficam sem preenchimento até uma nova coleta, sem presumir 0%. O ícone mostra o maior
 percentual válido entre os provedores habilitados, ou `?` quando não há uma leitura atual.

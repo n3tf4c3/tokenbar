@@ -150,6 +150,45 @@ Assert-Equal (Test-StartupLinkCurrent $fakeConhost ('--headless "{0}" -File x.ps
 Assert-Equal (Test-StartupLinkCurrent $fakeConhost ('--headless "{0}" -File x.ps1' -f $fakeWinPs)) $true 'Valid conhost shortcut is kept'
 Assert-Equal (Test-StartupLinkCurrent (Join-Path $fakeRoot 'System32\wscript.exe') '"x.vbs"') $false 'Legacy wscript shortcut is replaced'
 
+# Texto acessivel do painel (achado 7): mesmo conteudo das linhas desenhadas com GDI+.
+Set-DisabledProviders @()
+$a11yClaude = [pscustomobject]@{provider='claude';label='Claude';status='unavailable';stale=$true;collectedAt=$now.AddMinutes(-6).ToString('o');windows=@([pscustomobject]@{id='five_hour';usedPercent=93;resetsAt=$now.AddHours(-1).ToString('o')})}
+$a11yCodex = [pscustomobject]@{provider='codex';label='Codex';status='ok';plan='plus';collectedAt=$now.ToString('o');windows=@(
+  [pscustomobject]@{id='codex_primary';label='Janela de 5 horas';durationMinutes=300;usedPercent=40.4;resetsAt=$now.AddMinutes(105).ToString('o')},
+  [pscustomobject]@{id='codex_secondary';durationMinutes=10080;usedPercent=92;resetsAt='2026-09-07T07:00:00Z'}
+)}
+$a11yAntigravity = [pscustomobject]@{provider='antigravity';label='Antigravity';status='ok';collectedAt=$now.ToString('o');windows=$null}
+$script:Snapshot = [pscustomobject]@{providers=@($a11yClaude,$a11yCodex,$a11yAntigravity)}
+Assert-Equal (Get-PanelAccessibleText $now) 'Claude (dados em cache): 5h, 93% usado, renovando. Codex (plano plus): Janela de 5 horas, 40% usado, renova em 1h 45m; sem, 92% usado, renova em 1d 18h. Antigravity: sem dados.' 'Accessible panel text lists every window with usage and reset per provider'
+Set-DisabledProviders @('claude', 'antigravity')
+Assert-Equal (Get-PanelAccessibleText $now) 'Codex (plano plus): Janela de 5 horas, 40% usado, renova em 1h 45m; sem, 92% usado, renova em 1d 18h.' 'Accessible panel text follows the provider selection'
+Set-DisabledProviders @('claude', 'codex', 'antigravity')
+Assert-Equal (Get-PanelAccessibleText $now) 'Nenhum provedor selecionado.' 'Accessible panel text explains an empty selection'
+Set-DisabledProviders @()
+$script:Snapshot = $null
+Assert-Equal (Get-PanelAccessibleText $now) 'Sem dados.' 'Accessible panel text explains missing data'
+foreach ($name in 'Update-Tray', 'Show-Panel') {
+  $called = (Get-TrayFunction $name).Find({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Update-PanelAccessibility' }, $true)
+  Assert-Equal ([bool] $called) $true "$name refreshes the panel accessible text"
+}
+# O nome que o UI Automation entrega ao leitor de tela, numa janela que nunca e exibida.
+Add-Type -AssemblyName System.Windows.Forms, UIAutomationClient, UIAutomationTypes
+. ([scriptblock]::Create((Get-TrayFunction 'Update-PanelAccessibility').Extent.Text))
+$script:Form = New-Object System.Windows.Forms.Form
+try {
+  # Update-PanelAccessibility usa o relogio real; 30 s de folga mantem o minuto da contagem.
+  $realNow = [DateTimeOffset]::UtcNow
+  $script:Snapshot = [pscustomobject]@{providers=@([pscustomobject]@{provider='codex';label='Codex';status='ok';plan='plus';collectedAt=$realNow.ToString('o');windows=@(
+    [pscustomobject]@{id='codex_primary';label='Janela de 5 horas';durationMinutes=300;usedPercent=40;resetsAt=$realNow.AddSeconds(105 * 60 + 30).ToString('o')}
+  )})}
+  Update-PanelAccessibility
+  $uiaName = [System.Windows.Automation.AutomationElement]::FromHandle($script:Form.Handle).Current.Name
+  Assert-Equal $uiaName 'TokenBar, cotas das assinaturas. Codex (plano plus): Janela de 5 horas, 40% usado, renova em 1h 45m.' 'UI Automation exposes the panel windows, usage and resets as the window name'
+} finally {
+  $script:Form.Dispose()
+  $script:Snapshot = $null
+}
+
 # Log da bandeja
 $tempLog = Join-Path $fixture 'tray.log'
 Write-TrayLog $tempLog 'primeira'

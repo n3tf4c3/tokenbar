@@ -31,6 +31,8 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 - "Iniciar com o Windows" resolve um host PowerShell existente (Windows PowerShell do
   sistema ou o `pwsh.exe` em uso) antes de criar o atalho e só marca a opção se ele foi
   gravado; atalhos que apontam para um `powershell.exe` inexistente são refeitos.
+- O painel da bandeja expõe seu conteúdo em texto para leitores de tela: o nome da janela
+  (UI Automation) lista cada janela de cota com percentual usado e renovação, por provedor.
 
 ### Bandeja sem padrão de script malicioso
 
