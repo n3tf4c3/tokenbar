@@ -2,6 +2,18 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\..\tray\state.ps1')
 $now = [DateTimeOffset]'2026-09-05T13:00:00Z'
 $passed = 0
+# Toda escrita dos testes fica nesta pasta exclusiva, removida no final.
+$tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+$fixture = Join-Path $tempRoot ('tokenbar-tray-test-{0}' -f [guid]::NewGuid())
+New-Item -ItemType Directory -Path $fixture | Out-Null
+function Remove-TestFixture {
+  # Só apaga a pasta criada acima: filha direta do TEMP e com o prefixo do teste.
+  $parent = [System.IO.Path]::GetFullPath((Split-Path -Parent $fixture)).TrimEnd('\')
+  if ($parent -eq $tempRoot.TrimEnd('\') -and (Split-Path -Leaf $fixture) -like 'tokenbar-tray-test-*' -and (Test-Path -LiteralPath $fixture)) {
+    Remove-Item -LiteralPath $fixture -Recurse -Force
+  }
+}
+trap { Remove-TestFixture; break }
 function Assert-Equal {
   param($Actual, $Expected, [string] $Message)
   if ($Actual -ne $Expected) { throw "$Message - expected: $Expected; actual: $Actual" }
@@ -64,7 +76,7 @@ Assert-Equal (Get-WorstUsage $now) $null 'Worst usage is null when all providers
 Assert-Equal (Get-TooltipText $now) 'TokenBar - nenhum provedor selecionado' 'Tooltip informs when all providers are deselected'
 
 # Teste de persistencia e leitura da configuracao
-$tempConfig = [System.IO.Path]::GetTempFileName()
+$tempConfig = Join-Path $fixture 'tray-config.json'
 try {
   Set-DisabledProviders @('claude', 'antigravity')
   Save-TrayConfig $tempConfig
@@ -98,18 +110,24 @@ Assert-Equal $script:DaemonFailures 0 'A daemon that ran long enough clears the 
 Reset-DaemonBackoff
 
 # Log da bandeja
-$tempLog = Join-Path ([System.IO.Path]::GetTempPath()) ('tokenbar-test-{0}.log' -f [guid]::NewGuid())
-try {
-  Write-TrayLog $tempLog 'primeira'
-  Assert-Equal ((Get-Content $tempLog -Raw) -match "\[$PID\] primeira") $true 'Tray log records timestamp, pid and message'
-  Set-Content $tempLog ('x' * 210KB)
-  Write-TrayLog $tempLog 'depois da rotacao'
-  Assert-Equal (Test-Path ([System.IO.Path]::ChangeExtension($tempLog, 'previous.log'))) $true 'Oversized tray log is rotated'
-  Assert-Equal ((Get-Content $tempLog -Raw) -match 'depois da rotacao') $true 'Rotated tray log starts fresh'
-  Write-TrayLog 'Z:\pasta\inexistente\tray.log' 'ignorada'
-  Assert-Equal $true $true 'Unwritable log path never throws'
-} finally {
-  Remove-Item $tempLog, ([System.IO.Path]::ChangeExtension($tempLog, 'previous.log')) -Force -ErrorAction SilentlyContinue
-}
+$tempLog = Join-Path $fixture 'tray.log'
+Write-TrayLog $tempLog 'primeira'
+Assert-Equal ((Get-Content $tempLog -Raw) -match "\[$PID\] primeira") $true 'Tray log records timestamp, pid and message'
+Set-Content $tempLog ('x' * 210KB)
+Write-TrayLog $tempLog 'depois da rotacao'
+Assert-Equal (Test-Path ([System.IO.Path]::ChangeExtension($tempLog, 'previous.log'))) $true 'Oversized tray log is rotated'
+Assert-Equal ((Get-Content $tempLog -Raw) -match 'depois da rotacao') $true 'Rotated tray log starts fresh'
+# Caminho inválido dentro da fixture (achado 6): um arquivo usado como pasta-pai nunca
+# vira diretório, em qualquer máquina, e não há destino fora da fixture para escrever.
+$parentFile = Join-Path $fixture 'pai-arquivo'
+Set-Content -LiteralPath $parentFile -Value 'fixture' -Encoding ASCII
+$before = @(Get-ChildItem -LiteralPath $fixture -Recurse -Force | ForEach-Object { $_.FullName }) -join '|'
+$threw = $false
+try { Write-TrayLog (Join-Path $parentFile 'tray.log') 'ignorada' } catch { $threw = $true }
+Assert-Equal $threw $false 'Unwritable log path never throws'
+Assert-Equal ((Get-Content -LiteralPath $parentFile -Raw).Trim()) 'fixture' 'Failed log write leaves the parent file untouched'
+Assert-Equal (@(Get-ChildItem -LiteralPath $fixture -Recurse -Force | ForEach-Object { $_.FullName }) -join '|') $before 'Failed log write creates nothing in the fixture'
 
+Remove-TestFixture
+Assert-Equal (Test-Path -LiteralPath $fixture) $false 'Test fixture is removed'
 Write-Output "$passed Windows tray checks passed."
