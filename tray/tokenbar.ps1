@@ -368,21 +368,31 @@ function Update-Tray {
   }
 }
 
+# Devolve $true só se o atalho foi gravado apontando para executáveis que existem; sem um
+# host PowerShell válido não cria nada, e a opção do menu não é marcada.
 function Save-StartupLink {
+  param([string] $SystemRoot = $env:SystemRoot, [string] $HostHome = $PSHOME)
+  $conhost = Join-Path $SystemRoot 'System32\conhost.exe'
+  $hostExe = Resolve-StartupHost $SystemRoot $HostHome
+  if (-not $hostExe -or -not (Test-Path -LiteralPath $conhost -PathType Leaf)) {
+    Write-TrayLog $script:LogPath 'atalho de inicializacao nao criado: conhost ou host PowerShell ausente'
+    return $false
+  }
   $shell = New-Object -ComObject WScript.Shell
   $link = $shell.CreateShortcut($script:StartupLink)
   # conhost --headless: com o Windows Terminal como terminal padrão, powershell.exe -WindowStyle Hidden
   # abre uma janela dele (fechá-la mata a bandeja). RemoteSigned dispensa Bypass para scripts locais.
-  $link.TargetPath = Join-Path $env:SystemRoot 'System32\conhost.exe'
-  $link.Arguments = ('--headless "{0}" -NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File "{1}"' -f (Join-Path $PSHOME 'powershell.exe'), $PSCommandPath)
+  $link.TargetPath = $conhost
+  $link.Arguments = ('--headless "{0}" -NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File "{1}"' -f $hostExe, $PSCommandPath)
   $link.WorkingDirectory = $script:Root
   $link.WindowStyle = 7
   $link.Description = 'TokenBar'
   $link.Save()
+  return (Test-Path -LiteralPath $script:StartupLink -PathType Leaf)
 }
 
-function Get-StartupLinkTarget {
-  return (New-Object -ComObject WScript.Shell).CreateShortcut($script:StartupLink).TargetPath
+function Get-StartupLink {
+  return (New-Object -ComObject WScript.Shell).CreateShortcut($script:StartupLink)
 }
 
 $script:Menu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -436,13 +446,16 @@ $script:StartupItem.Add_Click({
     Remove-Item $script:StartupLink -Force
     $script:StartupItem.Checked = $false
   } else {
-    Save-StartupLink
-    $script:StartupItem.Checked = $true
+    $script:StartupItem.Checked = [bool] (Save-StartupLink)
   }
 })
 # Atalhos criados por versões antigas passavam por wscript + .vbs + -ExecutionPolicy Bypass,
-# cadeia que antivírus tratam como script malicioso; os seguintes abriam uma janela do Windows Terminal.
-if ((Test-Path $script:StartupLink) -and (Get-StartupLinkTarget) -notmatch 'conhost') { Save-StartupLink }
+# cadeia que antivírus tratam como script malicioso; os seguintes abriam uma janela do Windows Terminal,
+# e os criados a partir do PowerShell 7 podiam apontar para um powershell.exe inexistente.
+if (Test-Path $script:StartupLink) {
+  $currentLink = Get-StartupLink
+  if (-not (Test-StartupLinkCurrent $currentLink.TargetPath $currentLink.Arguments)) { [void] (Save-StartupLink) }
+}
 [void] $script:Menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 $exitItem = $script:Menu.Items.Add('Sair')
 $exitItem.Add_Click({ $script:Context.ExitThread() })

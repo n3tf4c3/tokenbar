@@ -109,6 +109,47 @@ Register-DaemonExit ([timespan]::FromMinutes(30))
 Assert-Equal $script:DaemonFailures 0 'A daemon that ran long enough clears the failure count'
 Reset-DaemonBackoff
 
+# Atalho de inicializacao (achado 5): a funcao real do tokenbar.ps1, so com pastas da fixture.
+$trayAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '..\..\tray\tokenbar.ps1'), [ref] $null, [ref] $null)
+function Get-TrayFunction {
+  param([string] $Name)
+  $node = $trayAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $Name }, $true)
+  if (-not $node) { throw "tokenbar.ps1 nao define $Name" }
+  return $node
+}
+. ([scriptblock]::Create((Get-TrayFunction 'Save-StartupLink').Extent.Text))
+$fakeRoot = Join-Path $fixture 'Windows'
+$bareRoot = Join-Path $fixture 'Windows sem PowerShell'
+$pwshHome = Join-Path $fixture 'PowerShell 7'
+$missingHome = Join-Path $fixture 'host ausente'
+$fakeConhost = Join-Path $fakeRoot 'System32\conhost.exe'
+$fakeWinPs = Join-Path $fakeRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$fakePwsh = Join-Path $pwshHome 'pwsh.exe'
+foreach ($file in $fakeConhost, $fakeWinPs, $fakePwsh, (Join-Path $bareRoot 'System32\conhost.exe')) { New-Item -ItemType File -Path $file -Force | Out-Null }
+New-Item -ItemType Directory -Path (Join-Path $fixture 'Startup') | Out-Null
+$script:StartupLink = Join-Path $fixture 'Startup\TokenBar.lnk'
+$script:Root = $fixture
+$script:LogPath = Join-Path $fixture 'startup.log'
+$readLink = { (New-Object -ComObject WScript.Shell).CreateShortcut($script:StartupLink) }
+
+Assert-Equal (Save-StartupLink -SystemRoot $bareRoot -HostHome $missingHome) $false 'Startup option is not confirmed without an existing PowerShell host'
+Assert-Equal (Test-Path -LiteralPath $script:StartupLink) $false 'No startup shortcut is created without an existing PowerShell host'
+Assert-Equal ((Get-Content -LiteralPath $script:LogPath -Raw) -match 'atalho de inicializacao nao criado') $true 'Missing startup host is logged'
+
+Assert-Equal (Save-StartupLink -SystemRoot $fakeRoot -HostHome $pwshHome) $true 'Startup shortcut is confirmed from a PowerShell 7 session'
+$link = & $readLink
+Assert-Equal $link.TargetPath $fakeConhost 'Startup shortcut runs conhost from the system root'
+Assert-Equal ($link.Arguments.StartsWith(('--headless "{0}" ' -f $fakeWinPs))) $true 'PowerShell 7 session uses the system Windows PowerShell, not $PSHOME\powershell.exe'
+Remove-Item -LiteralPath $script:StartupLink -Force
+
+Assert-Equal (Save-StartupLink -SystemRoot $bareRoot -HostHome $pwshHome) $true 'Startup shortcut falls back to the current pwsh.exe'
+Assert-Equal ((& $readLink).Arguments.StartsWith(('--headless "{0}" ' -f $fakePwsh))) $true 'Fallback shortcut points to an existing pwsh.exe'
+Remove-Item -LiteralPath $script:StartupLink -Force
+
+Assert-Equal (Test-StartupLinkCurrent $fakeConhost ('--headless "{0}" -File x.ps1' -f (Join-Path $pwshHome 'powershell.exe'))) $false 'Shortcut to a missing powershell.exe is repaired'
+Assert-Equal (Test-StartupLinkCurrent $fakeConhost ('--headless "{0}" -File x.ps1' -f $fakeWinPs)) $true 'Valid conhost shortcut is kept'
+Assert-Equal (Test-StartupLinkCurrent (Join-Path $fakeRoot 'System32\wscript.exe') '"x.vbs"') $false 'Legacy wscript shortcut is replaced'
+
 # Log da bandeja
 $tempLog = Join-Path $fixture 'tray.log'
 Write-TrayLog $tempLog 'primeira'

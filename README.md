@@ -83,7 +83,9 @@ projeto com `tray\tokenbar.ps1 -PreviewPath`.*
 - "Iniciar com o Windows" cria/remove um atalho `TokenBar.lnk` na pasta de Inicialização
   do usuário. Ele chama `conhost.exe --headless powershell.exe ...`: com o Windows Terminal
   como terminal padrão, `powershell.exe -WindowStyle Hidden` sozinho deixa uma janela dele
-  aberta, e fechá-la encerraria a bandeja.
+  aberta, e fechá-la encerraria a bandeja. O host é o Windows PowerShell do sistema, mesmo
+  que a bandeja tenha sido aberta no PowerShell 7 (sem ele, o `pwsh.exe` em uso); se nenhum
+  existir, o atalho não é criado, a opção fica desmarcada e o motivo vai para o `tray.log`.
 - Eventos e erros da bandeja ficam em `%LOCALAPPDATA%\tokenbar\tray.log`.
 
 > O número é o percentual **usado** na janela, igual ao `/usage` do Claude Code. As faixas

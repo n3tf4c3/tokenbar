@@ -28,6 +28,9 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 - Ao fim de cada coleta, o coletor Codex encerra no Windows a árvore de processos que ele
   mesmo iniciou: um wrapper `.cmd`/`.bat` ou o fallback JS não deixa mais o app-server
   descendente vivo após timeout ou cancelamento.
+- "Iniciar com o Windows" resolve um host PowerShell existente (Windows PowerShell do
+  sistema ou o `pwsh.exe` em uso) antes de criar o atalho e só marca a opção se ele foi
+  gravado; atalhos que apontam para um `powershell.exe` inexistente são refeitos.
 
 ### Bandeja sem padrão de script malicioso
 

@@ -49,6 +49,27 @@ function Write-TrayLog {
   }
 }
 
+# Host do atalho de inicializacao. No PowerShell 7, $PSHOME tem pwsh.exe e nao powershell.exe;
+# o Windows PowerShell do sistema e o contrato documentado, com o pwsh.exe atual como alternativa.
+function Resolve-StartupHost {
+  param([string] $SystemRoot = $env:SystemRoot, [string] $HostHome = $PSHOME)
+  $candidates = @()
+  if ($SystemRoot) { $candidates += Join-Path $SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe' }
+  if ($HostHome) { $candidates += (Join-Path $HostHome 'powershell.exe'), (Join-Path $HostHome 'pwsh.exe') }
+  foreach ($candidate in $candidates) {
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+  }
+  return $null
+}
+
+# Atalho atual: conhost --headless com um host PowerShell que existe.
+function Test-StartupLinkCurrent {
+  param([string] $TargetPath, [string] $Arguments)
+  if ($TargetPath -notmatch '\\conhost\.exe$' -or -not (Test-Path -LiteralPath $TargetPath -PathType Leaf)) { return $false }
+  if ($Arguments -notmatch '^--headless\s+"([^"]+)"') { return $false }
+  return (Test-Path -LiteralPath $Matches[1] -PathType Leaf)
+}
+
 function Get-DisabledProviders {
   return @($script:DisabledProviders)
 }
