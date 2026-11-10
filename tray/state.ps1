@@ -62,12 +62,22 @@ function Resolve-StartupHost {
   return $null
 }
 
-# Atalho atual: conhost --headless com um host PowerShell que existe.
-function Test-StartupLinkCurrent {
-  param([string] $TargetPath, [string] $Arguments)
-  if ($TargetPath -notmatch '\\conhost\.exe$' -or -not (Test-Path -LiteralPath $TargetPath -PathType Leaf)) { return $false }
+# Argumentos do conhost: --headless evita a janela do Windows Terminal (fecha-la mataria a bandeja);
+# RemoteSigned dispensa Bypass para scripts locais.
+function Get-StartupArguments {
+  param([string] $HostExe, [string] $ScriptPath)
+  return ('--headless "{0}" -NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File "{1}"' -f $HostExe, $ScriptPath)
+}
+
+# Comando de inicializacao atual: conhost --headless com um host PowerShell que existe e,
+# quando informado, o mesmo tokenbar.ps1 (a pasta do projeto pode ter mudado de lugar).
+function Test-StartupCommandCurrent {
+  param([string] $Execute, [string] $Arguments, [string] $ScriptPath)
+  if ($Execute -notmatch '\\conhost\.exe$' -or -not (Test-Path -LiteralPath $Execute -PathType Leaf)) { return $false }
   if ($Arguments -notmatch '^--headless\s+"([^"]+)"') { return $false }
-  return (Test-Path -LiteralPath $Matches[1] -PathType Leaf)
+  if (-not (Test-Path -LiteralPath $Matches[1] -PathType Leaf)) { return $false }
+  if ($ScriptPath -and -not $Arguments.EndsWith(('-File "{0}"' -f $ScriptPath), [StringComparison]::OrdinalIgnoreCase)) { return $false }
+  return $true
 }
 
 function Get-DisabledProviders {

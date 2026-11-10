@@ -80,12 +80,16 @@ projeto com `tray\tokenbar.ps1 -PreviewPath`.*
 - "Atualizar agora" cria `refresh.flag` no diretório de estado, que o daemon observa e consome.
 - `tray\tokenbar.ps1 -PreviewPath saida.png` renderiza o painel num PNG, sem abrir a GUI —
   útil para testar o layout. Aceita também `-DisabledProviders @('antigravity')` para omitir provedores no preview.
-- "Iniciar com o Windows" cria/remove um atalho `TokenBar.lnk` na pasta de Inicialização
-  do usuário. Ele chama `conhost.exe --headless powershell.exe ...`: com o Windows Terminal
+- "Iniciar com o Windows" registra/remove a tarefa agendada `TokenBar` (raiz do Agendador de
+  Tarefas), disparada no logon do usuário atual, sem privilégio elevado e sem limite de
+  duração. Ela chama `conhost.exe --headless powershell.exe ...`: com o Windows Terminal
   como terminal padrão, `powershell.exe -WindowStyle Hidden` sozinho deixa uma janela dele
   aberta, e fechá-la encerraria a bandeja. O host é o Windows PowerShell do sistema, mesmo
   que a bandeja tenha sido aberta no PowerShell 7 (sem ele, o `pwsh.exe` em uso); se nenhum
-  existir, o atalho não é criado, a opção fica desmarcada e o motivo vai para o `tray.log`.
+  existir ou o registro falhar, a opção fica desmarcada e o motivo vai para o `tray.log`.
+  Versões anteriores usavam um atalho `TokenBar.lnk` na pasta de Inicialização, que antivírus
+  como o Kaspersky marcam como `HEUR:Trojan.WinLNK.Agent.gen`; na abertura, a bandeja apaga
+  esse atalho e registra a tarefa no lugar dele.
 - Eventos e erros da bandeja ficam em `%LOCALAPPDATA%\tokenbar\tray.log`.
 
 > O número é o percentual **usado** na janela, igual ao `/usage` do Claude Code. As faixas

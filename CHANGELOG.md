@@ -7,6 +7,15 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não publicado]
 
+### Inicialização por tarefa agendada
+
+- "Iniciar com o Windows" passa a registrar a tarefa agendada `TokenBar`, disparada no logon
+  do usuário, sem elevação e sem o limite padrão de 72 h. O atalho `TokenBar.lnk` na pasta
+  de Inicialização (PowerShell oculto via `conhost --headless`) era posto em quarentena pelo
+  Kaspersky como `HEUR:Trojan.WinLNK.Agent.gen`; a bandeja apaga esse atalho na abertura e
+  registra a tarefa no lugar. Tarefas que apontam para um host inexistente ou para outro
+  `tokenbar.ps1` são refeitas.
+
 ### Somente bandeja do Windows
 
 - Remove a extensão do VS Code: barra de status, painel webview, comandos

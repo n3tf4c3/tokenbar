@@ -30,7 +30,10 @@ $script:RefreshFlagPath = Join-Path $script:StateDir 'refresh.flag'
 $script:ConfigPath = Join-Path $script:StateDir 'tray-config.json'
 $script:LogPath = Join-Path $script:StateDir 'tray.log'
 $script:LastTickError = $null
+# Atalho de versões anteriores, só para migração: ver Sync-StartupRegistration.
 $script:StartupLink = Join-Path ([Environment]::GetFolderPath('Startup')) 'TokenBar.lnk'
+$script:StartupTaskName = 'TokenBar'
+$script:TrayScript = $PSCommandPath
 $script:Snapshot = $null
 $script:SnapshotStamp = [datetime]::MinValue
 $script:Daemon = $null
@@ -379,31 +382,69 @@ function Update-Tray {
   }
 }
 
-# Devolve $true só se o atalho foi gravado apontando para executáveis que existem; sem um
-# host PowerShell válido não cria nada, e a opção do menu não é marcada.
-function Save-StartupLink {
+# "Iniciar com o Windows" é uma tarefa agendada do usuário, disparada no logon dele, sem
+# privilégio elevado. Antes era um .lnk na pasta de Inicialização, e um atalho que abre o
+# PowerShell oculto ali é tratado por antivírus como LNK malicioso (HEUR:Trojan.WinLNK.Agent.gen).
+function Get-StartupTask {
+  try {
+    return (Get-ScheduledTask -TaskPath '\' -TaskName $script:StartupTaskName -ErrorAction Stop)
+  } catch {
+    return $null
+  }
+}
+
+# Devolve $true só se a tarefa foi registrada apontando para executáveis que existem; sem um
+# host PowerShell válido não registra nada, e a opção do menu não é marcada.
+function Save-StartupTask {
   param([string] $SystemRoot = $env:SystemRoot, [string] $HostHome = $PSHOME)
   $conhost = Join-Path $SystemRoot 'System32\conhost.exe'
   $hostExe = Resolve-StartupHost $SystemRoot $HostHome
   if (-not $hostExe -or -not (Test-Path -LiteralPath $conhost -PathType Leaf)) {
-    Write-TrayLog $script:LogPath 'atalho de inicializacao nao criado: conhost ou host PowerShell ausente'
+    Write-TrayLog $script:LogPath 'inicializacao com o Windows nao configurada: conhost ou host PowerShell ausente'
     return $false
   }
-  $shell = New-Object -ComObject WScript.Shell
-  $link = $shell.CreateShortcut($script:StartupLink)
-  # conhost --headless: com o Windows Terminal como terminal padrão, powershell.exe -WindowStyle Hidden
-  # abre uma janela dele (fechá-la mata a bandeja). RemoteSigned dispensa Bypass para scripts locais.
-  $link.TargetPath = $conhost
-  $link.Arguments = ('--headless "{0}" -NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File "{1}"' -f $hostExe, $PSCommandPath)
-  $link.WorkingDirectory = $script:Root
-  $link.WindowStyle = 7
-  $link.Description = 'TokenBar'
-  $link.Save()
-  return (Test-Path -LiteralPath $script:StartupLink -PathType Leaf)
+  try {
+    $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $action = New-ScheduledTaskAction -Execute $conhost -Argument (Get-StartupArguments $hostExe $script:TrayScript) -WorkingDirectory $script:Root
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+    $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+    # Sem limite de execução: o padrão de 72 h encerraria a bandeja depois de três dias ligada.
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([timespan]::Zero) -MultipleInstances IgnoreNew
+    Register-ScheduledTask -TaskPath '\' -TaskName $script:StartupTaskName -Description 'TokenBar' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force -ErrorAction Stop | Out-Null
+  } catch {
+    Write-TrayLog $script:LogPath ('inicializacao com o Windows nao configurada: ' + $_.Exception.Message)
+    return $false
+  }
+  return [bool] (Get-StartupTask)
 }
 
-function Get-StartupLink {
-  return (New-Object -ComObject WScript.Shell).CreateShortcut($script:StartupLink)
+function Remove-StartupTask {
+  try {
+    Unregister-ScheduledTask -TaskPath '\' -TaskName $script:StartupTaskName -Confirm:$false -ErrorAction Stop
+  } catch {
+    Write-TrayLog $script:LogPath ('falha ao remover a inicializacao com o Windows: ' + $_.Exception.Message)
+  }
+}
+
+# Na abertura: quem tinha o atalho antigo passa para a tarefa, e uma tarefa que aponta para um
+# host inexistente ou para outro tokenbar.ps1 é refeita. Devolve se a opção está ativa.
+function Sync-StartupRegistration {
+  $hadLink = Test-Path -LiteralPath $script:StartupLink -PathType Leaf
+  if ($hadLink) {
+    try {
+      Remove-Item -LiteralPath $script:StartupLink -Force -ErrorAction Stop
+    } catch {
+      Write-TrayLog $script:LogPath ('falha ao remover o atalho antigo de inicializacao: ' + $_.Exception.Message)
+    }
+  }
+  $task = Get-StartupTask
+  if (-not $task) {
+    if ($hadLink) { return [bool] (Save-StartupTask) }
+    return $false
+  }
+  $action = @($task.Actions)[0]
+  if (-not (Test-StartupCommandCurrent $action.Execute $action.Arguments $script:TrayScript)) { return [bool] (Save-StartupTask) }
+  return $true
 }
 
 $script:Menu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -451,22 +492,11 @@ $script:ProvidersMenu.Add_DropDownOpening({
 [void] $script:Menu.Items.Add($script:ProvidersMenu)
 
 $script:StartupItem = $script:Menu.Items.Add('Iniciar com o Windows')
-$script:StartupItem.Checked = (Test-Path $script:StartupLink)
+$script:StartupItem.Checked = [bool] (Sync-StartupRegistration)
 $script:StartupItem.Add_Click({
-  if (Test-Path $script:StartupLink) {
-    Remove-Item $script:StartupLink -Force
-    $script:StartupItem.Checked = $false
-  } else {
-    $script:StartupItem.Checked = [bool] (Save-StartupLink)
-  }
+  if (Get-StartupTask) { Remove-StartupTask } else { [void] (Save-StartupTask) }
+  $script:StartupItem.Checked = [bool] (Get-StartupTask)
 })
-# Atalhos criados por versões antigas passavam por wscript + .vbs + -ExecutionPolicy Bypass,
-# cadeia que antivírus tratam como script malicioso; os seguintes abriam uma janela do Windows Terminal,
-# e os criados a partir do PowerShell 7 podiam apontar para um powershell.exe inexistente.
-if (Test-Path $script:StartupLink) {
-  $currentLink = Get-StartupLink
-  if (-not (Test-StartupLinkCurrent $currentLink.TargetPath $currentLink.Arguments)) { [void] (Save-StartupLink) }
-}
 [void] $script:Menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 $exitItem = $script:Menu.Items.Add('Sair')
 $exitItem.Add_Click({ $script:Context.ExitThread() })

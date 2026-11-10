@@ -30,7 +30,8 @@ severidade. Este é um projeto pessoal sem SLA formal — o compromisso é de me
 | `codex app-server --stdio` | Processo filho | Consultar `account/rateLimits/read` |
 | `agy --print /usage --print-timeout 10s` | Processo filho nativo | Ler cotas pelo comando oficial do Antigravity |
 | `%LOCALAPPDATA%\tokenbar\` | Leitura/escrita | Publicar e ler o snapshot do daemon |
-| Pasta de Inicialização do usuário | Escrita opcional | Atalho "Iniciar com o Windows" da bandeja |
+| Agendador de Tarefas (tarefa `\TokenBar`, usuário atual, sem elevação) | Escrita opcional | "Iniciar com o Windows" da bandeja |
+| Pasta de Inicialização do usuário | Remoção do `TokenBar.lnk` | Migração do atalho de versões anteriores |
 
 Nada além disso. Não há telemetria, não há servidor do TokenBar, não há coleta analítica.
 

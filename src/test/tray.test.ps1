@@ -117,7 +117,42 @@ function Get-TrayFunction {
   if (-not $node) { throw "tokenbar.ps1 nao define $Name" }
   return $node
 }
-. ([scriptblock]::Create((Get-TrayFunction 'Save-StartupLink').Extent.Text))
+foreach ($name in 'Get-StartupTask', 'Save-StartupTask', 'Remove-StartupTask', 'Sync-StartupRegistration') {
+  . ([scriptblock]::Create((Get-TrayFunction $name).Extent.Text))
+}
+# Agendador falso. O módulo ScheduledTasks é importado antes: se ele carregasse sozinho na primeira
+# chamada de New-ScheduledTaskAction, as funções dele passariam por cima destas e o teste
+# registraria uma tarefa real. New-ScheduledTask* só montam objetos em memória e ficam reais.
+Import-Module ScheduledTasks
+$script:FakeTask = $null
+$script:RegisterCalls = 0
+$script:RegisterFails = $false
+function Register-ScheduledTask {
+  [CmdletBinding()]
+  param($TaskPath, $TaskName, $Description, $Action, $Trigger, $Principal, $Settings, [switch] $Force)
+  $script:RegisterCalls++
+  if ($script:RegisterFails) { throw 'Acesso negado (simulado)' }
+  $script:FakeTask = [pscustomobject]@{TaskPath=$TaskPath;TaskName=$TaskName;Actions=@($Action);Triggers=@($Trigger);Principal=$Principal;Settings=$Settings}
+  return $script:FakeTask
+}
+function Get-ScheduledTask {
+  [CmdletBinding()]
+  param($TaskPath, $TaskName)
+  if (-not $script:FakeTask -or $script:FakeTask.TaskName -ne $TaskName) { throw 'Tarefa inexistente (simulado)' }
+  return $script:FakeTask
+}
+function Unregister-ScheduledTask {
+  [CmdletBinding()]
+  param($TaskPath, $TaskName, [switch] $Confirm)
+  $script:FakeTask = $null
+}
+foreach ($name in 'Register-ScheduledTask', 'Get-ScheduledTask', 'Unregister-ScheduledTask') {
+  $resolved = Get-Command $name
+  if ($resolved.Module) { throw "$name resolve para o modulo $($resolved.ModuleName), nao para o agendador falso" }
+}
+# Nome exclusivo: mesmo que o agendador falso falhe, a tarefa real do usuário não é tocada.
+$script:StartupTaskName = 'TokenBar-teste-{0}' -f [guid]::NewGuid().ToString('N')
+$script:TrayScript = Join-Path $fixture 'tray\tokenbar.ps1'
 $fakeRoot = Join-Path $fixture 'Windows'
 $bareRoot = Join-Path $fixture 'Windows sem PowerShell'
 $pwshHome = Join-Path $fixture 'PowerShell 7'
@@ -130,25 +165,55 @@ New-Item -ItemType Directory -Path (Join-Path $fixture 'Startup') | Out-Null
 $script:StartupLink = Join-Path $fixture 'Startup\TokenBar.lnk'
 $script:Root = $fixture
 $script:LogPath = Join-Path $fixture 'startup.log'
-$readLink = { (New-Object -ComObject WScript.Shell).CreateShortcut($script:StartupLink) }
 
-Assert-Equal (Save-StartupLink -SystemRoot $bareRoot -HostHome $missingHome) $false 'Startup option is not confirmed without an existing PowerShell host'
-Assert-Equal (Test-Path -LiteralPath $script:StartupLink) $false 'No startup shortcut is created without an existing PowerShell host'
-Assert-Equal ((Get-Content -LiteralPath $script:LogPath -Raw) -match 'atalho de inicializacao nao criado') $true 'Missing startup host is logged'
+Assert-Equal (Save-StartupTask -SystemRoot $bareRoot -HostHome $missingHome) $false 'Startup option is not confirmed without an existing PowerShell host'
+Assert-Equal $script:RegisterCalls 0 'No startup task is registered without an existing PowerShell host'
+Assert-Equal ((Get-Content -LiteralPath $script:LogPath -Raw) -match 'inicializacao com o Windows nao configurada') $true 'Missing startup host is logged'
 
-Assert-Equal (Save-StartupLink -SystemRoot $fakeRoot -HostHome $pwshHome) $true 'Startup shortcut is confirmed from a PowerShell 7 session'
-$link = & $readLink
-Assert-Equal $link.TargetPath $fakeConhost 'Startup shortcut runs conhost from the system root'
-Assert-Equal ($link.Arguments.StartsWith(('--headless "{0}" ' -f $fakeWinPs))) $true 'PowerShell 7 session uses the system Windows PowerShell, not $PSHOME\powershell.exe'
-Remove-Item -LiteralPath $script:StartupLink -Force
+Assert-Equal (Save-StartupTask -SystemRoot $fakeRoot -HostHome $pwshHome) $true 'Startup task is confirmed from a PowerShell 7 session'
+$taskAction = @($script:FakeTask.Actions)[0]
+Assert-Equal $taskAction.Execute $fakeConhost 'Startup task runs conhost from the system root'
+Assert-Equal ($taskAction.Arguments.StartsWith(('--headless "{0}" ' -f $fakeWinPs))) $true 'PowerShell 7 session uses the system Windows PowerShell, not $PSHOME\powershell.exe'
+Assert-Equal ($taskAction.Arguments.EndsWith(('-File "{0}"' -f $script:TrayScript))) $true 'Startup task runs this tokenbar.ps1'
+Assert-Equal $taskAction.WorkingDirectory $fixture 'Startup task starts in the project root'
+Assert-Equal $script:FakeTask.Settings.ExecutionTimeLimit 'PT0S' 'Startup task has no 72 h execution limit that would kill the tray'
+Assert-Equal ([string] $script:FakeTask.Principal.RunLevel) 'Limited' 'Startup task runs without elevation'
+Assert-Equal ([string] $script:FakeTask.Principal.LogonType) 'Interactive' 'Startup task runs in the user session, where the tray icon is visible'
+Assert-Equal $script:FakeTask.Triggers[0].UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) 'Startup task fires only at the current user logon'
+Remove-StartupTask
+Assert-Equal ([bool] (Get-StartupTask)) $false 'Disabling the option unregisters the task'
 
-Assert-Equal (Save-StartupLink -SystemRoot $bareRoot -HostHome $pwshHome) $true 'Startup shortcut falls back to the current pwsh.exe'
-Assert-Equal ((& $readLink).Arguments.StartsWith(('--headless "{0}" ' -f $fakePwsh))) $true 'Fallback shortcut points to an existing pwsh.exe'
-Remove-Item -LiteralPath $script:StartupLink -Force
+Assert-Equal (Save-StartupTask -SystemRoot $bareRoot -HostHome $pwshHome) $true 'Startup task falls back to the current pwsh.exe'
+Assert-Equal (@($script:FakeTask.Actions)[0].Arguments.StartsWith(('--headless "{0}" ' -f $fakePwsh))) $true 'Fallback task points to an existing pwsh.exe'
+Remove-StartupTask
 
-Assert-Equal (Test-StartupLinkCurrent $fakeConhost ('--headless "{0}" -File x.ps1' -f (Join-Path $pwshHome 'powershell.exe'))) $false 'Shortcut to a missing powershell.exe is repaired'
-Assert-Equal (Test-StartupLinkCurrent $fakeConhost ('--headless "{0}" -File x.ps1' -f $fakeWinPs)) $true 'Valid conhost shortcut is kept'
-Assert-Equal (Test-StartupLinkCurrent (Join-Path $fakeRoot 'System32\wscript.exe') '"x.vbs"') $false 'Legacy wscript shortcut is replaced'
+$script:RegisterFails = $true
+Assert-Equal (Save-StartupTask -SystemRoot $fakeRoot -HostHome $pwshHome) $false 'A refused task registration leaves the option unchecked'
+Assert-Equal ((Get-Content -LiteralPath $script:LogPath -Raw) -match 'Acesso negado \(simulado\)') $true 'Refused task registration is logged'
+$script:RegisterFails = $false
+
+$validArgs = Get-StartupArguments $fakeWinPs $script:TrayScript
+Assert-Equal (Test-StartupCommandCurrent $fakeConhost (Get-StartupArguments (Join-Path $pwshHome 'powershell.exe') $script:TrayScript) $script:TrayScript) $false 'Task pointing to a missing powershell.exe is repaired'
+Assert-Equal (Test-StartupCommandCurrent $fakeConhost $validArgs $script:TrayScript) $true 'Valid conhost task is kept'
+Assert-Equal (Test-StartupCommandCurrent $fakeConhost (Get-StartupArguments $fakeWinPs 'C:\outro\tokenbar.ps1') $script:TrayScript) $false 'Task pointing to another tokenbar.ps1 is repaired'
+Assert-Equal (Test-StartupCommandCurrent (Join-Path $fakeRoot 'System32\wscript.exe') '"x.vbs"' $script:TrayScript) $false 'Legacy wscript command is replaced'
+
+# Migração do atalho na pasta de Inicialização para a tarefa agendada. Sync-StartupRegistration
+# usa o host real do sistema só para checar existência; o registro continua falso.
+$script:RegisterCalls = 0
+Assert-Equal (Sync-StartupRegistration) $false 'Without shortcut or task the option stays off'
+Assert-Equal $script:RegisterCalls 0 'Nothing is registered for users who never enabled the option'
+New-Item -ItemType File -Path $script:StartupLink | Out-Null
+Assert-Equal (Sync-StartupRegistration) $true 'Users of the old shortcut keep starting with Windows'
+Assert-Equal (Test-Path -LiteralPath $script:StartupLink) $false 'The old Startup folder shortcut is removed'
+Assert-Equal $script:RegisterCalls 1 'The old shortcut becomes a scheduled task'
+Assert-Equal (Sync-StartupRegistration) $true 'A current task keeps the option on'
+Assert-Equal $script:RegisterCalls 1 'A current task is not registered again'
+$script:FakeTask.Actions = @([pscustomobject]@{Execute=$fakeConhost;Arguments=(Get-StartupArguments $fakeWinPs 'C:\outro\tokenbar.ps1')})
+Assert-Equal (Sync-StartupRegistration) $true 'A stale task keeps the option on'
+Assert-Equal $script:RegisterCalls 2 'A task for another tokenbar.ps1 is registered again'
+Assert-Equal (@($script:FakeTask.Actions)[0].Arguments.EndsWith(('-File "{0}"' -f $script:TrayScript))) $true 'Repaired task runs this tokenbar.ps1'
+Remove-StartupTask
 
 # Texto acessivel do painel (achado 7): mesmo conteudo das linhas desenhadas com GDI+.
 Set-DisabledProviders @()
