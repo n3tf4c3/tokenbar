@@ -153,6 +153,9 @@ consultou o serviço com sucesso. "Atualizar agora" também respeita as duas gua
 - **Validação**: percentuais ausentes/inválidos e datas inválidas geram diagnóstico;
   o último dado válido é preservado.
 - Um `401` é traduzido em "a sessão do Claude expirou; entre novamente no Claude Code".
+- **Login revogado**: se o app desktop do Claude ou outro dispositivo renovar a sessão, o
+  token deste computador é revogado antes de vencer (`cache · login revogado` no painel).
+  Abrir o Claude Code no terminal renova o arquivo local.
 - **Token local vencido**: só o Claude Code renova o token de acesso. Se ele ficar fechado
   por horas, a cota fica em cache (`cache · login` no painel) até o Claude Code ser aberto.
 - **Antivírus ou proxy inspecionando HTTPS**: se o certificado vier reassinado por uma raiz

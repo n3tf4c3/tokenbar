@@ -62,7 +62,7 @@ Todo coletor devolve um `ProviderSnapshot`:
   nextRetryAt?: string,    // próxima consulta permitida
   retryReason?: 'interval' | 'rate-limit',
   failureKind?: 'auth' | 'rate-limit' | 'network' | 'tls' | 'timeout' | 'invalid-response',
-  failureCode?: string,    // código técnico: HTTP_503, ECONNRESET, TOKEN_EXPIRED, SELF_SIGNED_CERT_IN_CHAIN
+  failureCode?: string,    // código técnico: HTTP_503, ECONNRESET, TOKEN_EXPIRED, TOKEN_REVOKED, SELF_SIGNED_CERT_IN_CHAIN
   tlsTrust?: 'system'      // a leitura só validou com as raízes da loja do Windows
 }
 ```
@@ -140,7 +140,7 @@ Só uma coleta com pelo menos uma janela válida atualiza o cache e zera o backo
 
 Toda falha leva `failureKind` e, quando há, `failureCode` (`safeFailureCode` só aceita
 maiúsculas, dígitos e sublinhado). `Get-FailureLabel` (`tray/state.ps1`) traduz os dois num
-motivo curto ao lado de `cache` no cabeçalho do provedor e no texto acessível: `login`,
+motivo curto ao lado de `cache` no cabeçalho do provedor e no texto acessível: `login`, `login revogado`,
 `limite de consultas`, `certificado`, `rede`, `sem resposta`, `resposta inesperada` ou
 `HTTP <status>`.
 
@@ -148,6 +148,12 @@ motivo curto ao lado de `cache` no cabeçalho do provedor e no texto acessível:
   horas e só o Claude Code o renova. Com o Claude Code fechado além desse prazo, a cota fica
   em cache até ele ser aberto de novo. O TokenBar não renova: isso exigiria gravar as
   credenciais e disputar o refresh token com o Claude Code.
+- **Token revogado** (`TOKEN_REVOKED`, rótulo `login revogado`): um `401` cujo corpo traz
+  `authentication_error` com "revoked". Acontece quando outro login da mesma conta (o app
+  desktop do Claude, outro dispositivo) renova a sessão: o token do arquivo local morre
+  antes do `expiresAt`, então `TOKEN_EXPIRED` não dispara. `isRevokedTokenBody` só compara o
+  texto remoto; ele não entra em snapshot, log nem mensagem. Abrir o Claude Code no
+  terminal regrava o arquivo. Os demais `401` continuam `HTTP_401`.
 - **Certificado não reconhecido**: `requestJson` repete a consulta uma vez com as raízes
   do Node somadas às da loja do Windows (`windowsTrustedRoots`). Se passar, o snapshot traz
   `tlsTrust: 'system'`; se não, a falha é `tls`. O motivo e os limites estão no

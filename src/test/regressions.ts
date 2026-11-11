@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
-import { ClaudeCollector, ClaudeHttpError, MIN_REFRESH_MS, parseClaudeUsage, parseRetryAfter } from '../collectors/claude';
+import { ClaudeCollector, ClaudeHttpError, isRevokedTokenBody, MIN_REFRESH_MS, parseClaudeUsage, parseRetryAfter } from '../collectors/claude';
 import { CodexCollector } from '../collectors/codex';
 import { createDiagnosticLogger } from '../diagnostics';
 import { RequestFactory, requestJson } from '../http';
@@ -15,6 +15,7 @@ const NOW = Date.parse('2026-09-05T13:00:00Z');
 const iso = (value: number) => new Date(value).toISOString();
 const credentials = () => Promise.resolve({ claudeAiOauth: { accessToken: 'SYNTHETIC_TEST_TOKEN', expiresAt: NOW + 86400_000 } });
 const usage = { five_hour: { utilization: 21, resets_at: iso(NOW + 3600_000) } };
+const revokedBody = { type: 'error', error: { type: 'authentication_error', message: 'OAuth access token has been revoked.' }, request_id: 'req_SYNTHETIC' };
 const fixture = (provider: 'claude' | 'codex' = 'claude'): ProviderSnapshot => ({
   provider, label: provider === 'claude' ? 'Claude' : 'Codex', status: 'ok', source: 'fixture',
   collectedAt: iso(NOW - 6 * 60_000), windows: [{ id: 'five_hour', label: 'Janela de 5 horas', usedPercent: 93, resetsAt: iso(NOW + 3600_000) }]
@@ -173,6 +174,7 @@ export async function runRegressionTests(): Promise<number> {
     } else if (request.url === '/invalid') { response.end('{'); }
     else if (request.url === '/large') { response.end('x'.repeat(200)); }
     else if (request.url === '/429') { response.writeHead(429, { 'Retry-After': '7200' }); response.end('rate limited'); }
+    else if (request.url === '/revoked') { response.writeHead(401); response.end(JSON.stringify(revokedBody)); }
     else { response.end(JSON.stringify(usage)); }
   });
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
@@ -192,6 +194,22 @@ export async function runRegressionTests(): Promise<number> {
       await assert.rejects(get('/invalid'), (error: unknown) => error instanceof CollectionError && error.kind === 'invalid-response');
       await assert.rejects(get('/large', { maxBytes: 32 }), (error: unknown) => error instanceof CollectionError && error.kind === 'invalid-response');
       const response = await get('/429'); assert.equal(response.statusCode, 429); assert.equal(response.headers['retry-after'], '7200');
+    });
+    await check('401 de token revogado vira TOKEN_REVOKED, sem expor o texto remoto', async () => {
+      const response = await get('/revoked');
+      assert.equal(response.statusCode, 401); assert.equal(isRevokedTokenBody(response.body), true);
+      // Corpo de erro que não é JSON continua aceito e não classifica nada.
+      assert.equal(isRevokedTokenBody((await get('/429')).body), false);
+      for (const body of [undefined, null, 'revoked', {}, { error: 'revoked' }, { error: { type: 'authentication_error', message: 'Invalid bearer token' } },
+        { error: { type: 'rate_limit_error', message: 'revoked' } }]) { assert.equal(isRevokedTokenBody(body), false); }
+      const collector = new ClaudeCollector(fixture(), { now: () => NOW, readCredentials: credentials,
+        requestUsage: async () => { throw new ClaudeHttpError(response.statusCode, undefined, isRevokedTokenBody(response.body)); } });
+      const result = await collector.collect();
+      assert.equal(result.status, 'unavailable'); assert.equal(result.failureKind, 'auth'); assert.equal(result.failureCode, 'TOKEN_REVOKED');
+      assert.equal(result.stale, true); assert.match(result.message ?? '', /Abra o Claude Code no terminal/);
+      assert.doesNotMatch(JSON.stringify(result), /has been revoked/);
+      // Um 401 sem esse motivo continua sendo sessão expirada; o motivo não vaza para outros status.
+      assert.equal(new ClaudeHttpError(401).code, 'HTTP_401'); assert.equal(new ClaudeHttpError(503, undefined, true).code, 'HTTP_503');
     });
     await check('cancelamento externo encerra a requisição em andamento', async () => {
       const controller = new AbortController(); const pending = get('/drip', { signal: controller.signal });

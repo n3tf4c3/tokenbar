@@ -79,6 +79,9 @@ export function requestJson(options: https.RequestOptions, {
             if (statusCode >= 200 && statusCode < 300) {
               try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
               catch { fail(new CollectionError('O serviço retornou uma resposta de cota inválida.', 'invalid-response')); return; }
+            } else {
+              // Corpo de erro é opcional: serve só para classificar a falha, nunca para exibir.
+              try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { body = undefined; }
             }
             settled = true;
             cleanUp();

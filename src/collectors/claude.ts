@@ -14,11 +14,23 @@ export function claudeThrottleReason(now: number, lastAttemptAt: number, backoff
 }
 
 export class ClaudeHttpError extends CollectionError {
-  public constructor(public readonly statusCode: number, public readonly retryAt?: number) {
-    super(statusCode === 401 ? 'A sessão do Claude expirou. Abra o Claude Code e use /login.'
+  public constructor(public readonly statusCode: number, public readonly retryAt?: number, public readonly revoked = false) {
+    super(statusCode === 401 && revoked ? 'O login do Claude neste computador foi substituído por outro mais recente. Abra o Claude Code no terminal para renová-lo; se não resolver, use /login.'
+      : statusCode === 401 ? 'A sessão do Claude expirou. Abra o Claude Code e use /login.'
       : statusCode === 429 ? 'O Claude limitou as consultas. A próxima tentativa será automática.'
-      : `Claude respondeu HTTP ${statusCode}.`, statusCode === 401 ? 'auth' : statusCode === 429 ? 'rate-limit' : 'network', `HTTP_${statusCode}`);
+      : `Claude respondeu HTTP ${statusCode}.`, statusCode === 401 ? 'auth' : statusCode === 429 ? 'rate-limit' : 'network',
+    statusCode === 401 && revoked ? 'TOKEN_REVOKED' : `HTTP_${statusCode}`);
   }
+}
+
+/**
+ * Um 401 com "token has been revoked" significa que outro login (o app desktop, outro
+ * dispositivo) renovou a sessão e o token do arquivo local morreu antes do `expiresAt`.
+ * O texto remoto só é comparado aqui; nunca vai para snapshot, log ou mensagem.
+ */
+export function isRevokedTokenBody(body: unknown): boolean {
+  const error = (body as { error?: { type?: unknown; message?: unknown } } | null | undefined)?.error;
+  return !!error && error.type === 'authentication_error' && typeof error.message === 'string' && /\brevoked\b/i.test(error.message);
 }
 
 interface ClaudeCredentials {
@@ -186,7 +198,8 @@ export class ClaudeCollector implements UsageCollector {
         'Anthropic-Beta': 'oauth-2025-04-20', 'User-Agent': `tokenbar/${VERSION}` }
     }, { signal });
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw new ClaudeHttpError(response.statusCode, parseRetryAfter(response.headers['retry-after'], this.now()));
+      throw new ClaudeHttpError(response.statusCode, parseRetryAfter(response.headers['retry-after'], this.now()),
+        response.statusCode === 401 && isRevokedTokenBody(response.body));
     }
     this.systemTrust = response.systemTrust;
     return response.body;

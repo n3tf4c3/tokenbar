@@ -7,6 +7,14 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não publicado]
 
+### Login do Claude revogado por outro login
+
+- Quando o app desktop do Claude (ou outro dispositivo) renova a sessão, o token em
+  `~/.claude/.credentials.json` é revogado antes de vencer e a API responde `401` com
+  "token has been revoked". O painel dizia "a sessão expirou, use /login"; agora mostra
+  `cache · login revogado`, com `failureCode: "TOKEN_REVOKED"`, e orienta abrir o Claude
+  Code no terminal para renovar o arquivo. O texto remoto só é comparado, nunca gravado.
+
 ### Cota do Claude com antivírus inspecionando HTTPS
 
 - A cota do Claude parava de atualizar quando um antivírus (Kaspersky) ou proxy reassinava
