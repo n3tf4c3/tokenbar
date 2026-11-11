@@ -51,6 +51,7 @@ export class UsageManager {
       result = unavailable(collector.provider, PROVIDER_LABELS[collector.provider], 'Coletor de cotas',
         error instanceof CollectionError ? error.message : 'Falha inesperada na coleta. A próxima tentativa é automática.', 'error');
       result.failureKind = error instanceof CollectionError ? error.kind : 'network';
+      result.failureCode = error instanceof CollectionError ? error.code : undefined;
     } finally { clearTimeout(timer); }
 
     const previous = this.snapshot.providers.find(provider => provider.provider === collector.provider);
@@ -62,7 +63,7 @@ export class UsageManager {
     providers.set(collector.provider, result);
     this.snapshot = { collectedAt: result.checkedAt!, providers: this.collectors.map(item => providers.get(item.provider)).filter((item): item is ProviderSnapshot => !!item) };
     this.diagnose({ event: 'collection', provider: collector.provider, status: result.status, failureKind: result.failureKind,
-      durationMs: Date.now() - started, collectedAt: result.collectedAt, lastAttemptAt: result.lastAttemptAt, nextRetryAt: result.nextRetryAt });
+      failureCode: result.status === 'ok' ? undefined : result.failureCode, tlsTrust: result.tlsTrust, durationMs: Date.now() - started, collectedAt: result.collectedAt, lastAttemptAt: result.lastAttemptAt, nextRetryAt: result.nextRetryAt });
     for (const listener of this.listeners) {
       try { listener(this.snapshot); } catch { this.diagnose({ event: 'listener-error', provider: collector.provider }); }
     }

@@ -27,6 +27,7 @@ severidade. Este é um projeto pessoal sem SLA formal — o compromisso é de me
 | --- | --- | --- |
 | `~/.claude/.credentials.json` | Leitura | Extrair o token OAuth da sessão do Claude Code |
 | `https://api.anthropic.com/api/oauth/usage` | HTTPS GET | Consultar as janelas de cota da assinatura |
+| Loja de certificados raiz do Windows | Leitura | Validar a conexão quando um antivírus ou proxy inspeciona o HTTPS (veja abaixo) |
 | `codex app-server --stdio` | Processo filho | Consultar `account/rateLimits/read` |
 | `agy --print /usage --print-timeout 10s` | Processo filho nativo | Ler cotas pelo comando oficial do Antigravity |
 | `%LOCALAPPDATA%\tokenbar\` | Leitura/escrita | Publicar e ler o snapshot do daemon |
@@ -47,16 +48,42 @@ Nada além disso. Não há telemetria, não há servidor do TokenBar, não há c
 - A saída bruta do Antigravity não entra em snapshot ou log. Erros são classificados e
   substituídos por mensagens locais, sem URLs de login ou detalhes da conta.
 
+### Conexão inspecionada por antivírus ou proxy
+
+A consulta ao Claude é validada primeiro só com as autoridades certificadoras embutidas no
+Node. Antivírus que inspecionam HTTPS (o Kaspersky, por exemplo) e proxies corporativos
+reassinam a conexão com uma raiz própria, instalada apenas na loja de certificados do
+Windows; o Node recusa essa cadeia e a cota do Claude para de atualizar.
+
+Quando a recusa é exatamente essa (emissor desconhecido), o TokenBar repete a consulta uma
+vez aceitando também as raízes da loja do Windows, a mesma confiança que o navegador já dá.
+O que isso significa:
+
+- Na tentativa recusada nada é enviado: o handshake falha antes de o token sair.
+- Na segunda tentativa o token passa pelo inspetor local, como já passa o tráfego do
+  navegador nessa máquina. Quem consegue instalar uma raiz na loja do Windows já tem acesso
+  ao perfil e, portanto, ao `~/.claude/.credentials.json`.
+- Um interceptador de rede sem raiz instalada na máquina continua recusado.
+- Fica visível: o snapshot marca `tlsTrust: "system"` e a origem
+  `Claude Code OAuth · certificados do Windows`; o diagnóstico registra o mesmo campo.
+- Se nem a loja do Windows reconhecer o emissor, a falha aparece como `certificado` no
+  painel (`failureKind: "tls"`), sem nova tentativa até o próximo ciclo.
+
+Para não depender disso, exclua `api.anthropic.com` (ou o `node.exe`) da verificação de
+conexões criptografadas do antivírus.
+
 ### O que fica em disco
 
 `%LOCALAPPDATA%\tokenbar\snapshot.json` contém apenas: percentuais de uso, horários de
-renovação, rótulos de janela, nome do plano (ex.: `max`) e mensagens de diagnóstico. É
+renovação, rótulos de janela, nome do plano (ex.: `max`), mensagens de diagnóstico e o
+código técnico da última falha (ex.: `HTTP_503`, `SELF_SIGNED_CERT_IN_CHAIN`). É
 gravado com as permissões padrão do perfil do usuário — ou seja, legível por processos que
 já rodam com a sua conta. Trate o nome do plano como a informação mais sensível ali.
 
 O diagnóstico local usa `diagnostics.jsonl` e `diagnostics.previous.jsonl`, cada um com
-até 256 KiB, em `%LOCALAPPDATA%	okenbar`. Uma lista explícita de campos limita
-o conteúdo a estado, categoria da falha, duração e horários. Headers, corpos de resposta,
+até 256 KiB, em `%LOCALAPPDATA%\tokenbar\`. Uma lista explícita de campos limita
+o conteúdo a estado, categoria e código técnico da falha, duração e horários. O código só
+aceita maiúsculas, dígitos e sublinhado, então texto remoto não cabe nele. Headers, corpos de resposta,
 mensagens remotas e credenciais não são registrados. Não há envio de logs pela rede.
 
 ## Endpoint não documentado (leia antes de usar)

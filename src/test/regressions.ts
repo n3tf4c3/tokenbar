@@ -1,4 +1,5 @@
 import * as assert from 'assert/strict';
+import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import * as http from 'http';
 import * as os from 'os';
@@ -6,7 +7,7 @@ import * as path from 'path';
 import { ClaudeCollector, ClaudeHttpError, MIN_REFRESH_MS, parseClaudeUsage, parseRetryAfter } from '../collectors/claude';
 import { CodexCollector } from '../collectors/codex';
 import { createDiagnosticLogger } from '../diagnostics';
-import { requestJson } from '../http';
+import { RequestFactory, requestJson } from '../http';
 import { clampPercent, CollectionError, parseReset, ProviderSnapshot, restoreSnapshot } from '../usage';
 import { UsageManager } from '../usageManager';
 
@@ -177,7 +178,7 @@ export async function runRegressionTests(): Promise<number> {
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   try {
     const address = server.address() as { port: number };
-    const get = (route: string, options: { timeoutMs?: number; maxBytes?: number; signal?: AbortSignal } = {}) => requestJson({
+    const get = (route: string, options: { timeoutMs?: number; maxBytes?: number; signal?: AbortSignal; request?: RequestFactory; systemRoots?: () => string[] | undefined } = {}) => requestJson({
       hostname: '127.0.0.1', port: address.port, path: route, agent: false
     }, { request: http.request, timeoutMs: 500, ...options });
     await check('HTTP interrompido após os headers rejeita a consulta e permite consultar novamente', async () => {
@@ -197,10 +198,68 @@ export async function runRegressionTests(): Promise<number> {
       const rejection = assert.rejects(pending, (error: unknown) => error instanceof CollectionError && error.kind === 'timeout');
       controller.abort(); await rejection;
     });
+    // O loopback é HTTP puro: a fábrica simula só o handshake recusado e repassa o resto ao servidor de teste.
+    const interceptedBy = (code: string, attempts: unknown[], alwaysFails = false): RequestFactory => (options, callback) => {
+      const { ca, ...plain } = options as typeof options & { ca?: unknown };
+      attempts.push(ca);
+      if (ca && !alwaysFails) { return http.request(plain, callback); }
+      const refused = new EventEmitter() as unknown as http.ClientRequest;
+      Object.assign(refused, { destroy: () => refused,
+        end: () => { setImmediate(() => refused.emit('error', Object.assign(new Error('synthetic'), { code }))); return refused; } });
+      return refused;
+    };
+    const roots = ['SYNTHETIC ROOT'];
+    await check('certificado reassinado por antivírus é aceito pela loja do Windows, uma única vez e só nesse caso', async () => {
+      const attempts: unknown[] = [];
+      const response = await get('/ok', { request: interceptedBy('SELF_SIGNED_CERT_IN_CHAIN', attempts), systemRoots: () => roots });
+      assert.deepEqual(response.body, usage); assert.equal(response.systemTrust, true); assert.deepEqual(attempts, [undefined, roots]);
+
+      let consulted = 0;
+      const direct = await get('/ok', { systemRoots: () => { consulted++; return roots; } });
+      assert.equal(direct.systemTrust, false); assert.equal(consulted, 0);
+
+      const reset: unknown[] = [];
+      await assert.rejects(get('/ok', { request: interceptedBy('ECONNRESET', reset), systemRoots: () => { consulted++; return roots; } }),
+        (error: unknown) => error instanceof CollectionError && error.kind === 'network' && error.code === 'ECONNRESET');
+      assert.equal(reset.length, 1); assert.equal(consulted, 0);
+    });
+    await check('certificado que nem o Windows reconhece vira falha de TLS, sem repetir a consulta em laço', async () => {
+      const tlsFailure = (error: unknown) => error instanceof CollectionError && error.kind === 'tls' && error.code === 'SELF_SIGNED_CERT_IN_CHAIN';
+      const withoutStore: unknown[] = [];
+      await assert.rejects(get('/ok', { request: interceptedBy('SELF_SIGNED_CERT_IN_CHAIN', withoutStore), systemRoots: () => undefined }), tlsFailure);
+      assert.equal(withoutStore.length, 1);
+      const unknownRoot: unknown[] = [];
+      await assert.rejects(get('/ok', { request: interceptedBy('SELF_SIGNED_CERT_IN_CHAIN', unknownRoot, true), systemRoots: () => roots }), tlsFailure);
+      assert.deepEqual(unknownRoot, [undefined, roots]);
+    });
   } finally {
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
+
+  await check('falha de certificado, HTTP 5xx e token vencido chegam ao snapshot e ao diagnóstico com o código da falha', async () => {
+    const intercepted = new ClaudeCollector(fixture(), { now: () => NOW, readCredentials: credentials,
+      requestUsage: async () => { throw new CollectionError('Certificado interceptado.', 'tls', 'SELF_SIGNED_CERT_IN_CHAIN'); } });
+    const events: { failureKind?: string; failureCode?: string }[] = [];
+    const manager = new UsageManager({ collectedAt: iso(NOW), providers: [fixture()] }, { collectors: [intercepted], onDiagnostic: event => events.push(event) });
+    await manager.refresh();
+    const result = manager.getSnapshot().providers[0];
+    assert.equal(result.status, 'error'); assert.equal(result.failureKind, 'tls'); assert.equal(result.failureCode, 'SELF_SIGNED_CERT_IN_CHAIN');
+    assert.equal(result.stale, true); assert.equal(result.windows[0].usedPercent, 93);
+    assert.equal(events[0].failureKind, 'tls'); assert.equal(events[0].failureCode, 'SELF_SIGNED_CERT_IN_CHAIN');
+    // O código sobrevive ao reinício do daemon, enquanto o piso entre consultas ainda vale.
+    assert.equal((await new ClaudeCollector(result, { now: () => NOW, readCredentials: credentials }).collect()).failureCode, 'SELF_SIGNED_CERT_IN_CHAIN');
+
+    const unavailable = new ClaudeCollector(fixture(), { now: () => NOW, readCredentials: credentials,
+      requestUsage: async () => { throw new ClaudeHttpError(503); } });
+    assert.equal((await unavailable.collect()).failureCode, 'HTTP_503');
+    const expired = new ClaudeCollector(fixture(), { now: () => NOW,
+      readCredentials: async () => ({ claudeAiOauth: { accessToken: 'SYNTHETIC', expiresAt: NOW - 1 } }) });
+    const stale = await expired.collect();
+    assert.equal(stale.failureCode, 'TOKEN_EXPIRED'); assert.match(stale.message ?? '', /Abra o Claude Code/);
+    // Texto livre nunca vira código: só maiúsculas, dígitos e sublinhado.
+    assert.equal(new CollectionError('x', 'network', 'Bearer SYNTHETIC').code, undefined);
+  });
 
   await check('diagnóstico tem rotação limitada e não grava campos sensíveis', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenbar-test-'));
@@ -209,6 +268,12 @@ export async function runRegressionTests(): Promise<number> {
       for (let i = 0; i < 12; i++) { log(Object.assign({ event: 'collection' as const, provider: 'claude' as const, status: 'error' as const },
         { accessToken: 'PRIVATE_SECRET', message: 'PRIVATE_SECRET', headers: { Authorization: 'PRIVATE_SECRET' } })); }
       const files = fs.readdirSync(directory); assert.equal(files.length, 2);
+      const codes = createDiagnosticLogger(path.join(directory, 'codes'), 4096);
+      codes({ event: 'collection', provider: 'claude', status: 'error', failureKind: 'tls', failureCode: 'SELF_SIGNED_CERT_IN_CHAIN' });
+      codes({ event: 'collection', provider: 'claude', status: 'ok', failureCode: 'Bearer PRIVATE_SECRET', tlsTrust: 'system' });
+      const coded = fs.readFileSync(path.join(directory, 'codes', 'diagnostics.jsonl'), 'utf8');
+      assert.ok(coded.includes('"failureCode":"SELF_SIGNED_CERT_IN_CHAIN"')); assert.ok(coded.includes('"tlsTrust":"system"'));
+      assert.ok(!coded.includes('PRIVATE_SECRET')); assert.equal(coded.split('failureCode').length, 2);
       for (const file of files) {
         const content = fs.readFileSync(path.join(directory, file), 'utf8');
         assert.ok(!content.includes('PRIVATE_SECRET')); assert.ok(Buffer.byteLength(content) <= 400);

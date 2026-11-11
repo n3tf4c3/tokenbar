@@ -225,6 +225,19 @@ $a11yCodex = [pscustomobject]@{provider='codex';label='Codex';status='ok';plan='
 $a11yAntigravity = [pscustomobject]@{provider='antigravity';label='Antigravity';status='ok';collectedAt=$now.ToString('o');windows=$null}
 $script:Snapshot = [pscustomobject]@{providers=@($a11yClaude,$a11yCodex,$a11yAntigravity)}
 Assert-Equal (Get-PanelAccessibleText $now) 'Claude (dados em cache): 5h, 93% usado, renovando. Codex (plano plus): Janela de 5 horas, 40% usado, renova em 1h 45m; sem, 92% usado, renova em 1d 18h. Antigravity: sem dados.' 'Accessible panel text lists every window with usage and reset per provider'
+# Motivo da falha: o painel e o texto acessivel dizem por que o provedor esta em cache.
+foreach ($case in @(@('auth', $null, 'login'), @('rate-limit', 'HTTP_429', 'HTTP 429'), @('tls', 'SELF_SIGNED_CERT_IN_CHAIN', 'certificado'),
+    @('network', 'ECONNRESET', 'rede'), @('network', 'HTTP_503', 'HTTP 503'), @('timeout', $null, 'sem resposta'),
+    @('invalid-response', $null, 'resposta inesperada'), @($null, $null, ''), @('network', 'HTTP_503 <script>', 'rede'))) {
+  $failed = [pscustomobject]@{status='error';failureKind=$case[0];failureCode=$case[1]}
+  Assert-Equal (Get-FailureLabel $failed) $case[2] ('Failure label for {0}/{1}' -f $case[0], $case[1])
+}
+Assert-Equal (Get-FailureLabel ([pscustomobject]@{status='ok';failureKind='tls'})) '' 'A healthy provider never shows a stale failure label'
+$a11yClaude | Add-Member -NotePropertyName failureKind -NotePropertyValue 'tls'
+$a11yClaude | Add-Member -NotePropertyName failureCode -NotePropertyValue 'SELF_SIGNED_CERT_IN_CHAIN'
+Assert-Equal ((Get-PanelAccessibleText $now) -like 'Claude (dados em cache, falha: certificado): 5h, 93% usado*') $true 'Accessible panel text names the failure reason'
+$drawsFailure = (Get-TrayFunction 'Write-Panel').Find({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Get-FailureLabel' }, $true)
+Assert-Equal ($null -ne $drawsFailure) $true 'Write-Panel draws the failure reason in the provider header'
 Set-DisabledProviders @('claude', 'antigravity')
 Assert-Equal (Get-PanelAccessibleText $now) 'Codex (plano plus): Janela de 5 horas, 40% usado, renova em 1h 45m; sem, 92% usado, renova em 1d 18h.' 'Accessible panel text follows the provider selection'
 Set-DisabledProviders @('claude', 'codex', 'antigravity')

@@ -153,6 +153,14 @@ consultou o serviço com sucesso. "Atualizar agora" também respeita as duas gua
 - **Validação**: percentuais ausentes/inválidos e datas inválidas geram diagnóstico;
   o último dado válido é preservado.
 - Um `401` é traduzido em "a sessão do Claude expirou; entre novamente no Claude Code".
+- **Token local vencido**: só o Claude Code renova o token de acesso. Se ele ficar fechado
+  por horas, a cota fica em cache (`cache · login` no painel) até o Claude Code ser aberto.
+- **Antivírus ou proxy inspecionando HTTPS**: se o certificado vier reassinado por uma raiz
+  que só existe na loja do Windows, a consulta é repetida uma vez aceitando essa loja
+  (detalhes e limites no [SECURITY.md](SECURITY.md#conexão-inspecionada-por-antivírus-ou-proxy)).
+- **Motivo visível**: com o provedor em cache, o cabeçalho do painel mostra o motivo
+  (`login`, `certificado`, `rede`, `HTTP 503`…) e o `diagnostics.jsonl` guarda o código
+  técnico da falha.
 
 > ⚠️ **Endpoint não documentado.** `/api/oauth/usage` não faz parte da API pública da
 > Anthropic. Ele é o mesmo endpoint que o `/usage` do Claude Code consome, mas pode mudar
@@ -230,7 +238,7 @@ a instalação e o login no CLI oficial. Não copie credenciais para o TokenBar.
   perfil do usuário.
 
 Os diagnósticos ficam em `%LOCALAPPDATA%\tokenbar\diagnostics.jsonl`. Há dois arquivos de até 256 KiB cada, com rotação automática.
-Eles registram estado, duração e horários de coleta/tentativa, sem tokens, mensagens
+Eles registram estado, categoria e código técnico da falha, duração e horários de coleta/tentativa, sem tokens, mensagens
 remotas, headers ou corpos de resposta.
 
 Detalhes completos, incluindo superfície de ataque e como reportar vulnerabilidades, em

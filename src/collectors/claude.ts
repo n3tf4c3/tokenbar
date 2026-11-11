@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { requestJson } from '../http';
-import { clampPercent, CollectionError, FailureKind, parseReset, ProviderSnapshot, UsageCollector, UsageWindow } from '../usage';
+import { clampPercent, CollectionError, FailureKind, parseReset, ProviderSnapshot, safeFailureCode, UsageCollector, UsageWindow } from '../usage';
 import { VERSION } from '../version';
 
 export const MIN_REFRESH_MS = 5 * 60 * 1000;
@@ -17,7 +17,7 @@ export class ClaudeHttpError extends CollectionError {
   public constructor(public readonly statusCode: number, public readonly retryAt?: number) {
     super(statusCode === 401 ? 'A sessão do Claude expirou. Abra o Claude Code e use /login.'
       : statusCode === 429 ? 'O Claude limitou as consultas. A próxima tentativa será automática.'
-      : `Claude respondeu HTTP ${statusCode}.`, statusCode === 401 ? 'auth' : statusCode === 429 ? 'rate-limit' : 'network');
+      : `Claude respondeu HTTP ${statusCode}.`, statusCode === 401 ? 'auth' : statusCode === 429 ? 'rate-limit' : 'network', `HTTP_${statusCode}`);
   }
 }
 
@@ -81,7 +81,8 @@ export class ClaudeCollector implements UsageCollector {
   private lastSnapshot?: ProviderSnapshot;
   private lastAttemptAt = 0;
   private backoffUntil = 0;
-  private lastFailure?: { message: string; status: 'unavailable' | 'error'; kind?: FailureKind };
+  private lastFailure?: { message: string; status: 'unavailable' | 'error'; kind?: FailureKind; code?: string };
+  private systemTrust = false;
   private readonly now: () => number;
 
   public constructor(initialSnapshot?: ProviderSnapshot, private readonly options: ClaudeCollectorOptions = {}) {
@@ -92,7 +93,8 @@ export class ClaudeCollector implements UsageCollector {
     const retryAt = Date.parse(initialSnapshot?.nextRetryAt ?? '');
     this.backoffUntil = initialSnapshot?.retryReason === 'rate-limit' && Number.isFinite(retryAt) ? retryAt : 0;
     if (initialSnapshot && initialSnapshot.status !== 'ok' && initialSnapshot.message) {
-      this.lastFailure = { message: initialSnapshot.message, status: initialSnapshot.status, kind: initialSnapshot.failureKind };
+      this.lastFailure = { message: initialSnapshot.message, status: initialSnapshot.status, kind: initialSnapshot.failureKind,
+        code: safeFailureCode(initialSnapshot.failureCode) };
     }
   }
 
@@ -120,11 +122,13 @@ export class ClaudeCollector implements UsageCollector {
     }
     const expiresAt = credentials.claudeAiOauth?.expiresAt;
     if (typeof expiresAt === 'number' && Number.isFinite(expiresAt) && expiresAt <= this.now()) {
-      return this.failed('A sessão do Claude expirou. Abra o Claude Code e use /login.', 'unavailable', 'auth');
+      // Só o Claude Code renova o token (o TokenBar nunca grava as credenciais); abrir o Claude Code costuma bastar.
+      return this.failed('A sessão local do Claude venceu. Abra o Claude Code para renová-la; se não resolver, use /login.', 'unavailable', 'auth', 'TOKEN_EXPIRED');
     }
 
     try {
       this.lastAttemptAt = this.now();
+      this.systemTrust = false;
       const usage = this.options.requestUsage ? await this.options.requestUsage(accessToken, signal) : await this.requestUsage(accessToken, signal);
       if (signal?.aborted) { throw new CollectionError('A consulta do Claude foi cancelada.', 'timeout'); }
       const windows = parseClaudeUsage(usage);
@@ -134,7 +138,9 @@ export class ClaudeCollector implements UsageCollector {
       this.backoffUntil = 0;
       this.lastFailure = undefined;
       this.lastSnapshot = {
-        provider: this.provider, label: 'Claude', status: 'ok', source: 'Claude Code OAuth',
+        provider: this.provider, label: 'Claude', status: 'ok',
+        source: this.systemTrust ? 'Claude Code OAuth · certificados do Windows' : 'Claude Code OAuth',
+        tlsTrust: this.systemTrust ? 'system' : undefined,
         collectedAt: new Date(this.now()).toISOString(),
         plan: typeof credentials.claudeAiOauth?.subscriptionType === 'string' ? credentials.claudeAiOauth.subscriptionType : undefined,
         windows
@@ -147,12 +153,12 @@ export class ClaudeCollector implements UsageCollector {
       }
       const kind = error instanceof CollectionError ? error.kind : 'network';
       return this.failed(error instanceof CollectionError ? error.message : 'Não foi possível atualizar o Claude. Uma nova tentativa será feita automaticamente.',
-        kind === 'auth' || kind === 'rate-limit' ? 'unavailable' : 'error', kind);
+        kind === 'auth' || kind === 'rate-limit' ? 'unavailable' : 'error', kind, error instanceof CollectionError ? error.code : undefined);
     }
   }
 
-  private failed(message: string, status: 'unavailable' | 'error', kind: FailureKind): ProviderSnapshot {
-    this.lastFailure = { message, status, kind };
+  private failed(message: string, status: 'unavailable' | 'error', kind: FailureKind, code?: string): ProviderSnapshot {
+    this.lastFailure = { message, status, kind, code };
     return this.currentSnapshot(message);
   }
 
@@ -161,7 +167,7 @@ export class ClaudeCollector implements UsageCollector {
       ...(this.lastSnapshot ?? { provider: this.provider, label: 'Claude', collectedAt: new Date(this.now()).toISOString(), windows: [] }),
       status: this.lastFailure?.status ?? (this.lastSnapshot ? 'ok' : 'unavailable'),
       source: this.lastSnapshot ? 'Claude Code OAuth · cache local' : 'Claude Code OAuth',
-      message, stale: !!this.lastSnapshot, failureKind: this.lastFailure?.kind
+      message, stale: !!this.lastSnapshot, failureKind: this.lastFailure?.kind, failureCode: this.lastFailure?.code
     });
   }
 
@@ -182,6 +188,7 @@ export class ClaudeCollector implements UsageCollector {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw new ClaudeHttpError(response.statusCode, parseRetryAfter(response.headers['retry-after'], this.now()));
     }
+    this.systemTrust = response.systemTrust;
     return response.body;
   }
 }

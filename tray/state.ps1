@@ -185,6 +185,23 @@ function Test-ProviderOutdated {
   return ($Provider.status -ne 'ok' -or -not $collected -or ($Now - $collected).TotalMinutes -ge 10)
 }
 
+# Motivo curto da ultima falha, para o cabecalho do provedor e o texto acessivel.
+# Vem so de failureKind/failureCode (valores fixos do daemon), nunca de texto remoto.
+function Get-FailureLabel {
+  param($Provider)
+  if (-not $Provider -or $Provider.status -eq 'ok') { return '' }
+  if ([string] $Provider.failureCode -match '^HTTP_([0-9]{3})$') { return 'HTTP ' + $Matches[1] }
+  switch ([string] $Provider.failureKind) {
+    'auth' { return 'login' }
+    'rate-limit' { return 'limite de consultas' }
+    'tls' { return 'certificado' }
+    'network' { return 'rede' }
+    'timeout' { return 'sem resposta' }
+    'invalid-response' { return 'resposta inesperada' }
+  }
+  return ''
+}
+
 function Test-ProviderAttention {
   param($Provider, [DateTimeOffset] $Now = [DateTimeOffset]::UtcNow)
   if ((Test-ProviderOutdated $Provider $Now) -or -not $Provider.windows) { return $true }
@@ -222,6 +239,8 @@ function Get-PanelAccessibleText {
     $tags = @()
     if ($provider.plan) { $tags += 'plano ' + $provider.plan }
     if ($provider.stale -or (Test-ProviderOutdated $provider $Now)) { $tags += 'dados em cache' }
+    $failure = Get-FailureLabel $provider
+    if ($failure) { $tags += 'falha: ' + $failure }
     if ($tags.Count) { $name += ' (' + ($tags -join ', ') + ')' }
     if (-not $provider.windows) {
       '{0}: sem dados.' -f $name

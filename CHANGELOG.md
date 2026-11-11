@@ -7,6 +7,22 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não publicado]
 
+### Cota do Claude com antivírus inspecionando HTTPS
+
+- A cota do Claude parava de atualizar quando um antivírus (Kaspersky) ou proxy reassinava
+  a conexão com `api.anthropic.com`: o Node não reconhece a raiz, que só existe na loja de
+  certificados do Windows, e a falha aparecia apenas como "rede". Agora, quando o emissor
+  não é reconhecido, a consulta é repetida uma vez aceitando também as raízes do Windows;
+  o snapshot e o diagnóstico marcam `tlsTrust: "system"`. Se nem o Windows reconhecer o
+  emissor, a falha é `tls`.
+- O painel mostra o motivo ao lado de `cache` (`login`, `certificado`, `rede`,
+  `HTTP 503`, `limite de consultas`, `sem resposta`, `resposta inesperada`), também no
+  texto para leitores de tela.
+- Snapshot e `diagnostics.jsonl` ganham `failureCode`, o código técnico da falha
+  (`HTTP_503`, `ECONNRESET`, `TOKEN_EXPIRED`…), restrito a maiúsculas, dígitos e sublinhado.
+- Token local vencido passa a orientar "abra o Claude Code para renová-la", em vez de pedir
+  `/login` direto.
+
 ### Inicialização por tarefa agendada
 
 - "Iniciar com o Windows" passa a registrar a tarefa agendada `TokenBar`, disparada no logon

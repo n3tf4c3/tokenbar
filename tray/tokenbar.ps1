@@ -161,6 +161,10 @@ function Write-Panel {
     if ($provider.stale -or (Test-ProviderOutdated $provider)) {
       if ($tag) { $tag += ' ' + [char] 0x00B7 + ' cache' } else { $tag = 'cache' }
     }
+    $failure = Get-FailureLabel $provider
+    if ($failure) {
+      if ($tag) { $tag += ' ' + [char] 0x00B7 + ' ' + $failure } else { $tag = $failure }
+    }
     if ($tag) {
       $tagSize = $Graphics.MeasureString($tag, $script:Fonts.Small)
       $Graphics.DrawString($tag, $script:Fonts.Small, $mutedBrush, [float] ($Width - $pad - $tagSize.Width), [float] ($y + 3))

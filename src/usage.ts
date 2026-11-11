@@ -1,9 +1,18 @@
 export type ProviderId = 'claude' | 'codex' | 'antigravity';
 export const PROVIDER_LABELS: Record<ProviderId, string> = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
-export type FailureKind = 'auth' | 'rate-limit' | 'network' | 'timeout' | 'invalid-response';
+export type FailureKind = 'auth' | 'rate-limit' | 'network' | 'tls' | 'timeout' | 'invalid-response';
+
+/** Código técnico da falha (ex.: `ECONNRESET`, `HTTP_503`): só maiúsculas, dígitos e sublinhado, nunca texto remoto. */
+export function safeFailureCode(value: unknown): string | undefined {
+  return typeof value === 'string' && /^[A-Z][A-Z0-9_]{1,47}$/.test(value) ? value : undefined;
+}
 
 export class CollectionError extends Error {
-  public constructor(message: string, public readonly kind: FailureKind) { super(message); }
+  public readonly code?: string;
+  public constructor(message: string, public readonly kind: FailureKind, code?: string) {
+    super(message);
+    this.code = safeFailureCode(code);
+  }
 }
 
 export interface UsageWindow {
@@ -31,6 +40,9 @@ export interface ProviderSnapshot {
   nextRetryAt?: string;
   retryReason?: 'interval' | 'rate-limit';
   failureKind?: FailureKind;
+  failureCode?: string;
+  /** `system`: a última leitura válida só passou com as raízes da loja de certificados do Windows. */
+  tlsTrust?: 'system';
 }
 
 export interface UsageSnapshot {

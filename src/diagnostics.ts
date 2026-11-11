@@ -1,12 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { FailureKind, ProviderId, ProviderSnapshot } from './usage';
+import { FailureKind, ProviderId, ProviderSnapshot, safeFailureCode } from './usage';
 
 export interface DiagnosticEvent {
   event: 'collection' | 'daemon-start' | 'publish-error' | 'listener-error' | 'unexpected-error';
   provider?: ProviderId;
   status?: ProviderSnapshot['status'];
   failureKind?: FailureKind;
+  failureCode?: string;
+  tlsTrust?: 'system';
   durationMs?: number;
   collectedAt?: string;
   lastAttemptAt?: string;
@@ -22,7 +24,8 @@ export function createDiagnosticLogger(directory: string, maxBytes = 256 * 1024)
       fs.mkdirSync(directory, { recursive: true });
       const line = JSON.stringify({
         at: new Date().toISOString(), event: event.event, provider: event.provider,
-        status: event.status, failureKind: event.failureKind, durationMs: event.durationMs,
+        status: event.status, failureKind: event.failureKind, failureCode: safeFailureCode(event.failureCode),
+        tlsTrust: event.tlsTrust === 'system' ? 'system' : undefined, durationMs: event.durationMs,
         collectedAt: event.collectedAt, lastAttemptAt: event.lastAttemptAt, nextRetryAt: event.nextRetryAt
       }) + '\n';
       if (fs.existsSync(current) && fs.statSync(current).size + Buffer.byteLength(line) > maxBytes) {

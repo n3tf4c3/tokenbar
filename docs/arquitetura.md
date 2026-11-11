@@ -35,7 +35,7 @@ o snapshot que a bandeja lê.
 | `src/collectors/claude.ts` | Lê a sessão OAuth do Claude Code e consulta as janelas de cota. Cache, backoff e tradução de erros. |
 | `src/collectors/codex.ts` | Sobe o `codex app-server` e lê a cota principal e as janelas próprias do Spark na mesma consulta. |
 | `src/collectors/antigravity.ts` | Executa `/usage` no CLI oficial, valida TSV, converte restante em usado e preserva cache/esperas. |
-| `src/http.ts` | HTTP com prazo total, cancelamento, limite de tamanho e resposta incompleta. |
+| `src/http.ts` | HTTP com prazo total, cancelamento, limite de tamanho, resposta incompleta e nova tentativa com as raízes da loja do Windows quando o emissor do certificado não é reconhecido. |
 | `src/diagnostics.ts` | Log local com campos permitidos e rotação de dois arquivos de 256 KiB. |
 | `tray/state.ps1` | Cálculos de idade, tempo, avisos, filtros de provedores e backoff de relançamento do daemon, sem GUI, compartilhados com os testes. |
 | `src/daemon.ts` | Processo Node de vida longa que publica o snapshot em disco para a bandeja. |
@@ -61,7 +61,9 @@ Todo coletor devolve um `ProviderSnapshot`:
   lastAttemptAt?: string,  // última tentativa de consulta ao provedor
   nextRetryAt?: string,    // próxima consulta permitida
   retryReason?: 'interval' | 'rate-limit',
-  failureKind?: 'auth' | 'rate-limit' | 'network' | 'timeout' | 'invalid-response'
+  failureKind?: 'auth' | 'rate-limit' | 'network' | 'tls' | 'timeout' | 'invalid-response',
+  failureCode?: string,    // código técnico: HTTP_503, ECONNRESET, TOKEN_EXPIRED, SELF_SIGNED_CERT_IN_CHAIN
+  tlsTrust?: 'system'      // a leitura só validou com as raízes da loja do Windows
 }
 ```
 
@@ -133,6 +135,23 @@ decide o que *mostrar* enquanto a consulta está travada é `currentSnapshot()` 
 senão o último diagnóstico, que é mais útil ao usuário que um "aguarde".
 
 Só uma coleta com pelo menos uma janela válida atualiza o cache e zera o backoff.
+
+### Falhas e o que o usuário vê
+
+Toda falha leva `failureKind` e, quando há, `failureCode` (`safeFailureCode` só aceita
+maiúsculas, dígitos e sublinhado). `Get-FailureLabel` (`tray/state.ps1`) traduz os dois num
+motivo curto ao lado de `cache` no cabeçalho do provedor e no texto acessível: `login`,
+`limite de consultas`, `certificado`, `rede`, `sem resposta`, `resposta inesperada` ou
+`HTTP <status>`.
+
+- **Token local vencido** (`TOKEN_EXPIRED`): o token de acesso do Claude Code dura poucas
+  horas e só o Claude Code o renova. Com o Claude Code fechado além desse prazo, a cota fica
+  em cache até ele ser aberto de novo. O TokenBar não renova: isso exigiria gravar as
+  credenciais e disputar o refresh token com o Claude Code.
+- **Certificado não reconhecido**: `requestJson` repete a consulta uma vez com as raízes
+  do Node somadas às da loja do Windows (`windowsTrustedRoots`). Se passar, o snapshot traz
+  `tlsTrust: 'system'`; se não, a falha é `tls`. O motivo e os limites estão no
+  [SECURITY](../SECURITY.md#conexão-inspecionada-por-antivírus-ou-proxy).
 Atualizações manuais respeitam as mesmas guardas. O HTTP tem prazo total de 10 s, trata
 `error`, `aborted` e encerramento incompleto e limita o corpo a 1 MiB.
 
@@ -236,7 +255,8 @@ Diretório: `%LOCALAPPDATA%\tokenbar\` (fallback para o home do usuário).
 | `tray-config.json` | `tokenbar.ps1`, no menu "Provedores" | `tokenbar.ps1` |
 
 O daemon grava `diagnostics.jsonl` e `diagnostics.previous.jsonl`, com rotação em 256 KiB.
-Os logs contêm apenas estado, duração e horários; mensagens remotas e credenciais não entram.
+Os logs contêm apenas estado, categoria e código da falha, `tlsTrust`, duração e horários;
+mensagens remotas e credenciais não entram.
 
 A escrita atômica evita que a bandeja leia um JSON pela metade. O flag é o único canal de
 comando bandeja → daemon; não há socket nem porta aberta. As preferências de provedores
