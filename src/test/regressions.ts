@@ -275,6 +275,17 @@ export async function runRegressionTests(): Promise<number> {
       readCredentials: async () => ({ claudeAiOauth: { accessToken: 'SYNTHETIC', expiresAt: NOW - 1 } }) });
     const stale = await expired.collect();
     assert.equal(stale.failureCode, 'TOKEN_EXPIRED'); assert.match(stale.message ?? '', /Abra o Claude Code/);
+    // Login apagado pelo Claude Code: o bloco fica, com o token vazio e expiresAt zerado.
+    let readsAfterLogout = 0;
+    const loggedOut = await new ClaudeCollector(fixture(), { now: () => NOW,
+      readCredentials: async () => ({ claudeAiOauth: { accessToken: '', expiresAt: 0, subscriptionType: 'max' } }),
+      requestUsage: async () => { readsAfterLogout++; return {}; } }).collect();
+    assert.equal(loggedOut.failureKind, 'auth'); assert.equal(loggedOut.failureCode, 'LOGGED_OUT');
+    assert.match(loggedOut.message ?? '', /\/login/); assert.match(loggedOut.message ?? '', /app desktop/);
+    assert.equal(readsAfterLogout, 0); assert.equal(loggedOut.stale, true);
+    // Sem o bloco do Claude no arquivo, continua a mensagem genérica, sem código.
+    const missing = await new ClaudeCollector(fixture(), { now: () => NOW, readCredentials: async () => ({}) }).collect();
+    assert.equal(missing.failureKind, 'auth'); assert.equal(missing.failureCode, undefined);
     // Texto livre nunca vira código: só maiúsculas, dígitos e sublinhado.
     assert.equal(new CollectionError('x', 'network', 'Bearer SYNTHETIC').code, undefined);
   });

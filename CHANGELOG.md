@@ -7,6 +7,13 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não publicado]
 
+### Login do Claude Code apagado
+
+- Quando o Claude Code apaga o login local (o arquivo continua, mas com o token vazio), o
+  painel dizia "sessão não encontrada". Agora mostra `cache · login encerrado`, com
+  `failureCode: "LOGGED_OUT"`, e orienta rodar `claude` no terminal e usar `/login`,
+  avisando que o login do app desktop não vale para o TokenBar.
+
 ### Login do Claude revogado por outro login
 
 - Quando o app desktop do Claude (ou outro dispositivo) renova a sessão, o token em

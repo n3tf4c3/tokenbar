@@ -62,7 +62,7 @@ Todo coletor devolve um `ProviderSnapshot`:
   nextRetryAt?: string,    // próxima consulta permitida
   retryReason?: 'interval' | 'rate-limit',
   failureKind?: 'auth' | 'rate-limit' | 'network' | 'tls' | 'timeout' | 'invalid-response',
-  failureCode?: string,    // código técnico: HTTP_503, ECONNRESET, TOKEN_EXPIRED, TOKEN_REVOKED, SELF_SIGNED_CERT_IN_CHAIN
+  failureCode?: string,    // código técnico: HTTP_503, ECONNRESET, TOKEN_EXPIRED, TOKEN_REVOKED, LOGGED_OUT, SELF_SIGNED_CERT_IN_CHAIN
   tlsTrust?: 'system'      // a leitura só validou com as raízes da loja do Windows
 }
 ```
@@ -140,7 +140,7 @@ Só uma coleta com pelo menos uma janela válida atualiza o cache e zera o backo
 
 Toda falha leva `failureKind` e, quando há, `failureCode` (`safeFailureCode` só aceita
 maiúsculas, dígitos e sublinhado). `Get-FailureLabel` (`tray/state.ps1`) traduz os dois num
-motivo curto ao lado de `cache` no cabeçalho do provedor e no texto acessível: `login`, `login revogado`,
+motivo curto ao lado de `cache` no cabeçalho do provedor e no texto acessível: `login`, `login revogado`, `login encerrado`,
 `limite de consultas`, `certificado`, `rede`, `sem resposta`, `resposta inesperada` ou
 `HTTP <status>`.
 
@@ -154,6 +154,11 @@ motivo curto ao lado de `cache` no cabeçalho do provedor e no texto acessível:
   antes do `expiresAt`, então `TOKEN_EXPIRED` não dispara. `isRevokedTokenBody` só compara o
   texto remoto; ele não entra em snapshot, log nem mensagem. Abrir o Claude Code no
   terminal regrava o arquivo. Os demais `401` continuam `HTTP_401`.
+- **Login apagado** (`LOGGED_OUT`, rótulo `login encerrado`): o bloco `claudeAiOauth`
+  existe, mas com `accessToken` vazio. É o que o Claude Code deixa quando descarta o login
+  (refresh recusado depois de uma revogação, `/logout`). Sem refresh token, só `/login` no
+  Claude Code do terminal resolve; o app desktop guarda o próprio login fora desse arquivo.
+  Sem o bloco, a falha continua `auth` sem código.
 - **Certificado não reconhecido**: `requestJson` repete a consulta uma vez com as raízes
   do Node somadas às da loja do Windows (`windowsTrustedRoots`). Se passar, o snapshot traz
   `tlsTrust: 'system'`; se não, a falha é `tls`. O motivo e os limites estão no

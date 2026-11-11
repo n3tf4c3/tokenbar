@@ -192,6 +192,7 @@ function Get-FailureLabel {
   if (-not $Provider -or $Provider.status -eq 'ok') { return '' }
   if ([string] $Provider.failureCode -match '^HTTP_([0-9]{3})$') { return 'HTTP ' + $Matches[1] }
   if ([string] $Provider.failureCode -ceq 'TOKEN_REVOKED') { return 'login revogado' }
+  if ([string] $Provider.failureCode -ceq 'LOGGED_OUT') { return 'login encerrado' }
   switch ([string] $Provider.failureKind) {
     'auth' { return 'login' }
     'rate-limit' { return 'limite de consultas' }

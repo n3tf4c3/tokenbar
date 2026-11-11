@@ -229,7 +229,7 @@ Assert-Equal (Get-PanelAccessibleText $now) 'Claude (dados em cache): 5h, 93% us
 foreach ($case in @(@('auth', $null, 'login'), @('rate-limit', 'HTTP_429', 'HTTP 429'), @('tls', 'SELF_SIGNED_CERT_IN_CHAIN', 'certificado'),
     @('network', 'ECONNRESET', 'rede'), @('network', 'HTTP_503', 'HTTP 503'), @('timeout', $null, 'sem resposta'),
     @('invalid-response', $null, 'resposta inesperada'), @($null, $null, ''), @('auth', 'TOKEN_REVOKED', 'login revogado'),
-    @('auth', 'TOKEN_EXPIRED', 'login'), @('auth', 'HTTP_401', 'HTTP 401'),@('network', 'HTTP_503 <script>', 'rede'))) {
+    @('auth', 'TOKEN_EXPIRED', 'login'), @('auth', 'LOGGED_OUT', 'login encerrado'), @('auth', 'HTTP_401', 'HTTP 401'),@('network', 'HTTP_503 <script>', 'rede'))) {
   $failed = [pscustomobject]@{status='error';failureKind=$case[0];failureCode=$case[1]}
   Assert-Equal (Get-FailureLabel $failed) $case[2] ('Failure label for {0}/{1}' -f $case[0], $case[1])
 }

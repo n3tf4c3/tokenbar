@@ -130,6 +130,13 @@ export class ClaudeCollector implements UsageCollector {
     if (signal?.aborted) { throw new CollectionError('A consulta do Claude foi cancelada.', 'timeout'); }
     const accessToken = credentials?.claudeAiOauth?.accessToken;
     if (typeof accessToken !== 'string' || !accessToken) {
+      // O bloco existe com o token vazio quando o Claude Code apaga o login (refresh recusado,
+      // /logout). Sem refresh token, abrir o Claude Code não basta; e o login do app desktop
+      // fica com o próprio app, não neste arquivo.
+      if (credentials?.claudeAiOauth && typeof credentials.claudeAiOauth === 'object') {
+        return this.failed('O login do Claude Code no terminal foi encerrado. Rode claude no terminal e use /login; o login do app desktop não vale para o TokenBar.',
+          'unavailable', 'auth', 'LOGGED_OUT');
+      }
       return this.failed('A sessão local do Claude Code não foi encontrada. Use /login no Claude Code.', 'unavailable', 'auth');
     }
     const expiresAt = credentials.claudeAiOauth?.expiresAt;
