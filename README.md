@@ -112,7 +112,9 @@ O Antigravity usa quatro linhas curtas: `Gem 5h`, `Gem sem`, `C/G 5h` e `C/G sem
 com as assinaturas Claude e Codex. No tooltip, se não couberem todas as janelas, aparece
 apenas o maior percentual de cada provedor habilitado.
 
-Se o Claude pedir para renovar a sessão, abra o Claude Code e use `/login`. Para Codex ou
+O token do Claude vencido (depois de o PC ficar desligado, por exemplo) é renovado sozinho
+pelo Claude Code, que o TokenBar aciona com `claude auth status`. Se o Claude pedir para
+renovar a sessão mesmo assim, abra o Claude Code e use `/login`. Para Codex ou
 Antigravity, renove o login no CLI correspondente. O TokenBar tenta novamente nos ciclos
 seguintes, sem modificar arquivos de login.
 
@@ -156,8 +158,10 @@ consultou o serviço com sucesso. "Atualizar agora" também respeita as duas gua
 - **Login revogado**: se o app desktop do Claude ou outro dispositivo renovar a sessão, o
   token deste computador é revogado antes de vencer (`cache · login revogado` no painel).
   Abrir o Claude Code no terminal renova o arquivo local.
-- **Token local vencido**: só o Claude Code renova o token de acesso. Se ele ficar fechado
-  por horas, a cota fica em cache (`cache · login` no painel) até o Claude Code ser aberto.
+- **Token local vencido**: só o Claude Code renova o token de acesso, que dura 8 horas. Ao
+  achar o token vencido, o TokenBar roda `claude auth status` (no máximo a cada 15 minutos),
+  que renova o arquivo, e consulta com o token novo. Se a renovação falhar (refresh token
+  revogado, Claude Code ausente), a cota fica em cache (`cache · login` no painel).
 - **Antivírus ou proxy inspecionando HTTPS**: se o certificado vier reassinado por uma raiz
   que só existe na loja do Windows, a consulta é repetida uma vez aceitando essa loja
   (detalhes e limites no [SECURITY.md](SECURITY.md#conexão-inspecionada-por-antivírus-ou-proxy)).

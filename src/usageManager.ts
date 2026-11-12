@@ -1,4 +1,4 @@
-import { ClaudeCollector } from './collectors/claude';
+import { ClaudeCollector, renewClaudeSession } from './collectors/claude';
 import { CodexCollector } from './collectors/codex';
 import { AntigravityCollector } from './collectors/antigravity';
 import { DiagnosticEvent } from './diagnostics';
@@ -16,7 +16,7 @@ export class UsageManager {
     this.snapshot = restoreSnapshot(initialSnapshot) ?? { collectedAt: new Date(0).toISOString(), providers: [] };
     const cachedClaude = this.snapshot.providers.find(provider => provider.provider === 'claude');
     const cachedAntigravity = this.snapshot.providers.find(provider => provider.provider === 'antigravity');
-    this.collectors = options.collectors ?? [new ClaudeCollector(cachedClaude), new CodexCollector(), new AntigravityCollector(cachedAntigravity)];
+    this.collectors = options.collectors ?? [new ClaudeCollector(cachedClaude, { renewSession: renewClaudeSession }), new CodexCollector(), new AntigravityCollector(cachedAntigravity)];
   }
 
   public getSnapshot(): UsageSnapshot { return this.snapshot; }

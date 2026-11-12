@@ -144,10 +144,18 @@ motivo curto ao lado de `cache` no cabeçalho do provedor e no texto acessível:
 `limite de consultas`, `certificado`, `rede`, `sem resposta`, `resposta inesperada` ou
 `HTTP <status>`.
 
-- **Token local vencido** (`TOKEN_EXPIRED`): o token de acesso do Claude Code dura poucas
-  horas e só o Claude Code o renova. Com o Claude Code fechado além desse prazo, a cota fica
-  em cache até ele ser aberto de novo. O TokenBar não renova: isso exigiria gravar as
-  credenciais e disputar o refresh token com o Claude Code.
+- **Token local vencido** (`TOKEN_EXPIRED`): o token de acesso do Claude Code dura 8 horas
+  e só o Claude Code o renova. O TokenBar não usa o refresh token: isso exigiria gravar as
+  credenciais e disputá-lo com o Claude Code. Em vez disso, ao achar o token vencido, o
+  coletor chama `renewSession` (no daemon, `renewClaudeSession`): `findClaudeCode` acha o
+  executável nativo (`~/.local/bin`, `bin/claude.exe` do pacote npm global ou o PATH, nunca
+  shims `.cmd`/`.ps1`) e roda `claude auth status` sem shell, com prazo de 8 s,
+  `DISABLE_AUTOUPDATER=1` e a saída descartada. O próprio Claude Code renova e regrava o
+  arquivo, sob o controle de concorrência dele; o coletor relê e segue com o token novo.
+  Há no máximo uma tentativa a cada `MIN_RENEW_MS` (15 min). Se a renovação falhar ou o
+  arquivo continuar vencido, a falha segue `TOKEN_EXPIRED`, com a orientação de rodar
+  `claude` no terminal ou `/login`. Sem `renewSession` (os testes), nada é executado.
+  O token revogado não passa por aqui: o `expiresAt` local ainda está no futuro.
 - **Token revogado** (`TOKEN_REVOKED`, rótulo `login revogado`): um `401` cujo corpo traz
   `authentication_error` com "revoked". Acontece quando outro login da mesma conta (o app
   desktop do Claude, outro dispositivo) renova a sessão: o token do arquivo local morre

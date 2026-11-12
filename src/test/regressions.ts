@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
-import { ClaudeCollector, ClaudeHttpError, isRevokedTokenBody, MIN_REFRESH_MS, parseClaudeUsage, parseRetryAfter } from '../collectors/claude';
+import { ClaudeCollector, ClaudeHttpError, findClaudeCode, isRevokedTokenBody, MIN_REFRESH_MS, MIN_RENEW_MS, parseClaudeUsage, parseRetryAfter } from '../collectors/claude';
 import { CodexCollector } from '../collectors/codex';
 import { createDiagnosticLogger } from '../diagnostics';
 import { RequestFactory, requestJson } from '../http';
@@ -75,6 +75,54 @@ export async function runRegressionTests(): Promise<number> {
     assert.equal(result.collectedAt, previous.collectedAt); assert.deepEqual(result.windows, previous.windows); assert.equal(requests, 0);
     expired = false;
     assert.equal((await collector.collect()).status, 'ok'); assert.equal(requests, 1);
+  });
+
+  await check('token vencido é renovado pelo Claude Code e a consulta segue com o token novo', async () => {
+    let now = NOW; let renewed = false; let renewals = 0; const tokens: string[] = [];
+    const collector = new ClaudeCollector(fixture(), { now: () => now,
+      readCredentials: async () => ({ claudeAiOauth: renewed
+        ? { accessToken: 'SYNTHETIC_RENEWED', expiresAt: now + 8 * 3600_000 } : { accessToken: 'SYNTHETIC_OLD', expiresAt: now - 1 } }),
+      renewSession: async () => { renewals++; renewed = true; return true; },
+      requestUsage: async token => { tokens.push(token); return usage; } });
+    const result = await collector.collect(true);
+    assert.equal(result.status, 'ok'); assert.equal(result.stale, undefined); assert.equal(result.failureCode, undefined);
+    assert.equal(renewals, 1); assert.deepEqual(tokens, ['SYNTHETIC_RENEWED']);
+    // Com o token válido, a coleta seguinte não lança o CLI de novo.
+    now += MIN_REFRESH_MS;
+    assert.equal((await collector.collect()).status, 'ok'); assert.equal(renewals, 1);
+  });
+
+  await check('renovação que falha vira TOKEN_EXPIRED e só é repetida depois de 15 minutos', async () => {
+    let now = NOW; let renewals = 0; let requests = 0;
+    for (const renewSession of [async () => { renewals++; return false; }, async () => { renewals++; throw new Error('SYNTHETIC'); },
+      async () => { renewals++; return true; }]) {
+      now = NOW; renewals = 0;
+      // O CLI pode terminar sem erro e o arquivo continuar vencido (refresh token morto).
+      const collector = new ClaudeCollector(fixture(), { now: () => now, renewSession,
+        readCredentials: async () => ({ claudeAiOauth: { accessToken: 'SYNTHETIC', expiresAt: NOW - 1 } }),
+        requestUsage: async () => { requests++; return usage; } });
+      const first = await collector.collect(true);
+      assert.equal(first.status, 'unavailable'); assert.equal(first.failureCode, 'TOKEN_EXPIRED'); assert.equal(first.stale, true);
+      assert.match(first.message ?? '', /renovação automática não funcionou/); assert.match(first.message ?? '', /\/login/);
+      now += MIN_RENEW_MS - 1;
+      assert.equal((await collector.collect(true)).failureCode, 'TOKEN_EXPIRED'); assert.equal(renewals, 1);
+      now += 1;
+      await collector.collect(true); assert.equal(renewals, 2);
+    }
+    assert.equal(requests, 0);
+  });
+
+  await check('o executável do Claude Code é procurado sem shims nem shell', () => {
+    const win = { USERPROFILE: 'C:\\Users\\u', APPDATA: 'C:\\Users\\u\\AppData\\Roaming', PATH: 'C:\\tools;"C:\\Program Files\\nodejs"' };
+    const npmExe = 'C:\\Users\\u\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe';
+    const seen: string[] = [];
+    assert.equal(findClaudeCode(win, 'win32', candidate => { seen.push(candidate); return candidate === npmExe; }), npmExe);
+    assert.equal(seen[0], 'C:\\Users\\u\\.local\\bin\\claude.exe');
+    const all: string[] = []; findClaudeCode(win, 'win32', candidate => { all.push(candidate); return false; });
+    assert.ok(all.includes('C:\\tools\\claude.exe')); assert.ok(all.includes('C:\\Program Files\\nodejs\\claude.exe'));
+    assert.ok(all.every(candidate => candidate.endsWith('claude.exe')), 'nenhum .cmd, .ps1 ou .js é candidato');
+    assert.equal(findClaudeCode(win, 'win32', () => false), undefined);
+    assert.equal(findClaudeCode({ HOME: '/home/u', PATH: '/usr/bin' }, 'linux', candidate => candidate === '/usr/bin/claude'), '/usr/bin/claude');
   });
 
   await check('401 fica visível mesmo quando existe cache', async () => {

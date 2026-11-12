@@ -1,3 +1,4 @@
+import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -6,6 +7,8 @@ import { clampPercent, CollectionError, FailureKind, parseReset, ProviderSnapsho
 import { VERSION } from '../version';
 
 export const MIN_REFRESH_MS = 5 * 60 * 1000;
+/** Intervalo mínimo entre duas renovações automáticas pelo Claude Code. */
+export const MIN_RENEW_MS = 15 * 60 * 1000;
 
 export function claudeThrottleReason(now: number, lastAttemptAt: number, backoffUntil: number): 'backoff' | 'floor' | undefined {
   if (now < backoffUntil) { return 'backoff'; }
@@ -41,6 +44,60 @@ interface ClaudeCollectorOptions {
   now?: () => number;
   readCredentials?: (signal?: AbortSignal) => Promise<ClaudeCredentials>;
   requestUsage?: (accessToken: string, signal?: AbortSignal) => Promise<unknown>;
+  /**
+   * Pede ao Claude Code que renove o token vencido. Sem esta opção o coletor não executa
+   * nada (é o caso dos testes); o daemon passa `renewClaudeSession`.
+   */
+  renewSession?: (signal?: AbortSignal) => Promise<boolean>;
+}
+
+/**
+ * Localiza o executável nativo do Claude Code: o instalador oficial (`~/.local/bin`), o pacote
+ * npm global (`bin/claude.exe`, o mesmo que o shim `claude.cmd` chama) e o PATH. Shims
+ * `.cmd`/`.ps1` não são executados: nada passa por shell.
+ */
+export function findClaudeCode(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform,
+  isFile: (candidate: string) => boolean = candidate => { try { return fs.statSync(candidate).isFile(); } catch { return false; } }): string | undefined {
+  const windows = platform === 'win32';
+  const join = windows ? path.win32.join : path.posix.join;
+  const name = windows ? 'claude.exe' : 'claude';
+  const home = (windows ? env.USERPROFILE : env.HOME) || os.homedir();
+  const npmPackage = (directory: string) => windows
+    ? join(directory, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', name)
+    : join(directory, '..', 'lib', 'node_modules', '@anthropic-ai', 'claude-code', 'bin', name);
+  const candidates = [join(home, '.local', 'bin', name)];
+  if (windows) { candidates.push(npmPackage(join(env.APPDATA || join(home, 'AppData', 'Roaming'), 'npm'))); }
+  else { candidates.push(join(home, '.claude', 'local', name)); }
+  for (const raw of (env.PATH ?? env.Path ?? '').split(windows ? ';' : ':')) {
+    const directory = raw.trim().replace(/^"|"$/g, '');
+    if (directory) { candidates.push(join(directory, name), npmPackage(directory)); }
+  }
+  return candidates.find(isFile);
+}
+
+/**
+ * Roda `claude auth status`, que renova o token vencido com o refresh token e regrava
+ * `~/.claude/.credentials.json`. Quem grava é o Claude Code; o TokenBar só relê o arquivo.
+ * A saída (que traz dados da conta) é descartada sem ser lida.
+ */
+export function renewClaudeSession(signal?: AbortSignal): Promise<boolean> {
+  return new Promise(resolve => {
+    const executable = findClaudeCode();
+    if (!executable || signal?.aborted) { resolve(false); return; }
+    try {
+      const child = execFile(executable, ['auth', 'status'], {
+        cwd: os.tmpdir(), windowsHide: true, timeout: 8_000, maxBuffer: 64 * 1024, signal,
+        // A consulta não deve disparar a atualização do próprio CLI.
+        env: { ...process.env, DISABLE_AUTOUPDATER: '1' }
+      }, error => resolve(!error));
+      child.stdin?.on('error', () => undefined);
+      child.stdin?.end();
+    } catch { resolve(false); }
+  });
+}
+
+function isExpired(expiresAt: unknown, now: number): boolean {
+  return typeof expiresAt === 'number' && Number.isFinite(expiresAt) && expiresAt <= now;
 }
 
 export function parseRetryAfter(headerValue?: string | string[], now = Date.now()): number | undefined {
@@ -93,6 +150,7 @@ export class ClaudeCollector implements UsageCollector {
   private lastSnapshot?: ProviderSnapshot;
   private lastAttemptAt = 0;
   private backoffUntil = 0;
+  private lastRenewAt = 0;
   private lastFailure?: { message: string; status: 'unavailable' | 'error'; kind?: FailureKind; code?: string };
   private systemTrust = false;
   private readonly now: () => number;
@@ -119,16 +177,9 @@ export class ClaudeCollector implements UsageCollector {
         : 'Último dado válido. Aguardando o intervalo entre consultas.'));
     }
 
-    let credentials: ClaudeCredentials;
-    try {
-      credentials = this.options.readCredentials ? await this.options.readCredentials(signal)
-        : JSON.parse(await fs.promises.readFile(path.join(os.homedir(), '.claude', '.credentials.json'), { encoding: 'utf8', signal }));
-    } catch {
-      if (signal?.aborted) { throw new CollectionError('Tempo esgotado ao ler a sessão do Claude.', 'timeout'); }
-      return this.failed('Faça login no Claude Code para ler a cota da assinatura.', 'unavailable', 'auth');
-    }
-    if (signal?.aborted) { throw new CollectionError('A consulta do Claude foi cancelada.', 'timeout'); }
-    const accessToken = credentials?.claudeAiOauth?.accessToken;
+    let credentials = await this.readCredentials(signal);
+    if (!credentials) { return this.failed('Faça login no Claude Code para ler a cota da assinatura.', 'unavailable', 'auth'); }
+    let accessToken = credentials?.claudeAiOauth?.accessToken;
     if (typeof accessToken !== 'string' || !accessToken) {
       // O bloco existe com o token vazio quando o Claude Code apaga o login (refresh recusado,
       // /logout). Sem refresh token, abrir o Claude Code não basta; e o login do app desktop
@@ -139,10 +190,18 @@ export class ClaudeCollector implements UsageCollector {
       }
       return this.failed('A sessão local do Claude Code não foi encontrada. Use /login no Claude Code.', 'unavailable', 'auth');
     }
-    const expiresAt = credentials.claudeAiOauth?.expiresAt;
-    if (typeof expiresAt === 'number' && Number.isFinite(expiresAt) && expiresAt <= this.now()) {
-      // Só o Claude Code renova o token (o TokenBar nunca grava as credenciais); abrir o Claude Code costuma bastar.
-      return this.failed('A sessão local do Claude venceu. Abra o Claude Code para renová-la; se não resolver, use /login.', 'unavailable', 'auth', 'TOKEN_EXPIRED');
+    if (isExpired(credentials.claudeAiOauth?.expiresAt, this.now())) {
+      // Só o Claude Code renova o token (o TokenBar nunca grava as credenciais). Com o PC desligado
+      // por mais de 8 h o token sempre vence; pedir a renovação ao próprio CLI evita abrir o terminal.
+      const renewed = await this.renew(signal);
+      const renewedToken = renewed?.claudeAiOauth?.accessToken;
+      if (!renewed || typeof renewedToken !== 'string' || !renewedToken || isExpired(renewed.claudeAiOauth?.expiresAt, this.now())) {
+        return this.failed(this.options.renewSession
+          ? 'A sessão local do Claude venceu e a renovação automática não funcionou. Rode claude no terminal; se não resolver, use /login.'
+          : 'A sessão local do Claude venceu. Abra o Claude Code para renová-la; se não resolver, use /login.', 'unavailable', 'auth', 'TOKEN_EXPIRED');
+      }
+      credentials = renewed;
+      accessToken = renewedToken;
     }
 
     try {
@@ -174,6 +233,29 @@ export class ClaudeCollector implements UsageCollector {
       return this.failed(error instanceof CollectionError ? error.message : 'Não foi possível atualizar o Claude. Uma nova tentativa será feita automaticamente.',
         kind === 'auth' || kind === 'rate-limit' ? 'unavailable' : 'error', kind, error instanceof CollectionError ? error.code : undefined);
     }
+  }
+
+  private async readCredentials(signal?: AbortSignal): Promise<ClaudeCredentials | undefined> {
+    let credentials: ClaudeCredentials;
+    try {
+      credentials = this.options.readCredentials ? await this.options.readCredentials(signal)
+        : JSON.parse(await fs.promises.readFile(path.join(os.homedir(), '.claude', '.credentials.json'), { encoding: 'utf8', signal }));
+    } catch {
+      if (signal?.aborted) { throw new CollectionError('Tempo esgotado ao ler a sessão do Claude.', 'timeout'); }
+      return undefined;
+    }
+    if (signal?.aborted) { throw new CollectionError('A consulta do Claude foi cancelada.', 'timeout'); }
+    return credentials;
+  }
+
+  /** No máximo uma renovação a cada `MIN_RENEW_MS`: com o refresh token morto, o CLI não é lançado a cada ciclo. */
+  private async renew(signal?: AbortSignal): Promise<ClaudeCredentials | undefined> {
+    if (!this.options.renewSession || (this.lastRenewAt > 0 && this.now() - this.lastRenewAt < MIN_RENEW_MS)) { return undefined; }
+    this.lastRenewAt = this.now();
+    let renewed = false;
+    try { renewed = await this.options.renewSession(signal); } catch { renewed = false; }
+    if (signal?.aborted) { throw new CollectionError('A consulta do Claude foi cancelada.', 'timeout'); }
+    return renewed ? this.readCredentials(signal) : undefined;
   }
 
   private failed(message: string, status: 'unavailable' | 'error', kind: FailureKind, code?: string): ProviderSnapshot {

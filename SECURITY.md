@@ -28,6 +28,7 @@ severidade. Este é um projeto pessoal sem SLA formal — o compromisso é de me
 | `~/.claude/.credentials.json` | Leitura | Extrair o token OAuth da sessão do Claude Code |
 | `https://api.anthropic.com/api/oauth/usage` | HTTPS GET | Consultar as janelas de cota da assinatura |
 | Loja de certificados raiz do Windows | Leitura | Validar a conexão quando um antivírus ou proxy inspeciona o HTTPS (veja abaixo) |
+| `claude auth status` | Processo filho nativo, só com o token local vencido | Pedir ao Claude Code que renove o próprio token |
 | `codex app-server --stdio` | Processo filho | Consultar `account/rateLimits/read` |
 | `agy --print /usage --print-timeout 10s` | Processo filho nativo | Ler cotas pelo comando oficial do Antigravity |
 | `%LOCALAPPDATA%\tokenbar\` | Leitura/escrita | Publicar e ler o snapshot do daemon |
@@ -42,7 +43,10 @@ Nada além disso. Não há telemetria, não há servidor do TokenBar, não há c
   a requisição e usado somente no header `Authorization` da chamada a `api.anthropic.com`.
 - O token **não** é gravado em disco pelo TokenBar, **não** entra no snapshot, **não** entra
   em diagnóstico, **não** é registrado em log e **não** é enviado a nenhum outro host.
-- O TokenBar nunca grava nem modifica `~/.claude/.credentials.json`.
+- O TokenBar nunca grava nem modifica `~/.claude/.credentials.json` e não usa o refresh
+  token. Com o token vencido, roda `claude auth status`: é o Claude Code que renova e
+  regrava o arquivo, como faria ao ser aberto. A saída do comando, que traz dados da conta,
+  é descartada sem ser lida.
 - Codex e Antigravity autenticam dentro dos próprios CLIs. O TokenBar só consulta os
   limites; não lê nem exporta as credenciais do Google.
 - A saída bruta do Antigravity não entra em snapshot ou log. Erros são classificados e
@@ -111,7 +115,7 @@ O mesmo vale, em menor grau, para `account/rateLimits/read` do `codex app-server
 | Vetor | Situação |
 | --- | --- |
 | Dependências de runtime | Nenhuma. O daemon é um bundle sem `node_modules` em produção. |
-| Execução de processo | `codex app-server --stdio` e `agy --print /usage --print-timeout 10s`, encontrados em diretórios de instalação ou PATH. Argumentos fixos, nunca dados remotos; Antigravity usa executável nativo sem shell, timeout de 12 s e limite de saída de 64 KiB. |
+| Execução de processo | `claude auth status` (só com o token do Claude vencido, no máximo a cada 15 min, prazo de 8 s, auto-update desligado), `codex app-server --stdio` e `agy --print /usage --print-timeout 10s`, encontrados em diretórios de instalação ou PATH. Argumentos fixos, nunca dados remotos; Antigravity usa executável nativo sem shell, timeout de 12 s e limite de saída de 64 KiB. |
 | Resposta dos provedores | Percentuais passam por `clampPercent` (0–100); textos remotos são reduzidos ou trocados por mensagens locais; JSON inválido vira mensagem de erro, não exceção. |
 | Script da bandeja | PowerShell local que **só lê** o snapshot e desenha o texto com GDI+ (sem HTML); não faz rede nem lê credenciais. |
 

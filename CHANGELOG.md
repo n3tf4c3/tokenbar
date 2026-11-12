@@ -7,6 +7,15 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não publicado]
 
+### Token do Claude renovado sem abrir o terminal
+
+- O token de acesso do Claude Code dura 8 horas; depois de o PC ficar desligado à noite, a
+  cota ficava em `cache · login` até alguém abrir o Claude Code. Agora, ao achar o token
+  vencido, o daemon roda `claude auth status` (executável nativo, sem shell, saída
+  descartada), que renova o token com o refresh token, e relê o arquivo. Quem grava as
+  credenciais continua sendo o Claude Code. Uma tentativa a cada 15 minutos; se falhar, o
+  painel orienta rodar `claude` no terminal ou `/login`.
+
 ### Login do Claude Code apagado
 
 - Quando o Claude Code apaga o login local (o arquivo continua, mas com o token vazio), o
