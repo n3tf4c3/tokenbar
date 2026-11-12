@@ -20,6 +20,10 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
+          # Sem isto, o setup-node usa o Node 24 que estiver no cache do runner,
+          # que pode estar atrás do último patch de segurança (em 2026-11-12 o
+          # cache tinha a 24.22.2, e a correção era a 24.22.3).
+          check-latest: true
           cache: npm
 
       - name: Instalar dependências
