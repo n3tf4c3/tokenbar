@@ -29,7 +29,8 @@ A versão do Node vem de `.node-version`.
 ## Invariantes
 - Nenhum token entra em snapshot, log, mensagem de erro, relatório ou memória. Os testes usam credenciais sintéticas e HTTP em loopback, sem consultar contas reais ([CONTRIBUTING](CONTRIBUTING.md)).
 - `tray/tokenbar.ps1` inicia `dist/daemon.js` sozinho e o encerra ao sair: não suba o daemon à parte.
-- O TokenBar mostra cota de assinatura. Não misture com tokens de contexto nem com custo de chave de API (a tabela do README define a diferença).
+- O TokenBar mostra cota de assinatura e, separada dela, uma estimativa do valor equivalente em API (`src/cost.ts`), sempre rotulada como estimativa. Não misture com tokens de contexto nem com cobrança real de chave de API (a tabela do README define a diferença).
+- Dos registros de sessão (`~/.claude/projects`, `~/.codex/sessions`) só saem modelo, contadores de tokens, horário e identificador da resposta. O texto das conversas não entra em snapshot, log, teste nem relatório.
 - Mudança relevante acrescenta uma linha em `CHANGELOG.md`, na seção `## [Não publicado]`; commits em português, no imperativo.
 - A numeração de achados continua em `docs/auditoria-achados.md`.
 

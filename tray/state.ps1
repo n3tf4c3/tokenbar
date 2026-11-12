@@ -153,15 +153,54 @@ function Get-WindowShortLabel {
   return '-'
 }
 
+# -Short e a forma do painel ("1d 18h"); sem ele, a forma por extenso do texto acessivel.
 function Get-Countdown {
-  param([string] $ResetsAt, [DateTimeOffset] $Now = [DateTimeOffset]::UtcNow)
+  param([string] $ResetsAt, [DateTimeOffset] $Now = [DateTimeOffset]::UtcNow, [switch] $Short)
   $target = ConvertTo-UsageTimestamp $ResetsAt
   if (-not $target) { return '' }
   $span = $target - $Now
-  if ($span.TotalSeconds -le 0) { return 'renovando' }
-  if ($span.TotalDays -ge 1) { return ('renova em {0}d {1}h' -f $span.Days, $span.Hours) }
-  if ($span.TotalHours -ge 1) { return ('renova em {0}h {1}m' -f $span.Hours, $span.Minutes) }
-  return ('renova em {0}m' -f [math]::Max(1, [math]::Floor($span.TotalMinutes)))
+  if ($span.TotalSeconds -le 0) { if ($Short) { return 'renov.' } else { return 'renovando' } }
+  $prefix = if ($Short) { '' } else { 'renova em ' }
+  if ($span.TotalDays -ge 1) { return ('{0}{1}d {2}h' -f $prefix, $span.Days, $span.Hours) }
+  if ($span.TotalHours -ge 1) { return ('{0}{1}h {2}m' -f $prefix, $span.Hours, $span.Minutes) }
+  return ('{0}{1}m' -f $prefix, [math]::Max(1, [math]::Floor($span.TotalMinutes)))
+}
+
+# Estimativa de valor equivalente em API publicada pelo daemon (snapshot.costs). Nao e cobranca.
+function Get-ProviderCost {
+  param($Provider)
+  if (-not $Provider -or -not $script:Snapshot -or -not $script:Snapshot.costs) { return $null }
+  foreach ($cost in @($script:Snapshot.costs)) {
+    if ([string] $cost.provider -eq [string] $Provider.provider -and $cost.todayUsd -is [ValueType] -and $cost.weekUsd -is [ValueType]) { return $cost }
+  }
+  return $null
+}
+
+function Format-UsdShort {
+  param([double] $Amount)
+  $culture = [System.Globalization.CultureInfo]::GetCultureInfo('pt-BR')
+  if ($Amount -ge 1000) { return '$' + ($Amount / 1000).ToString('0.0', $culture) + 'k' }
+  if ($Amount -ge 10 -or $Amount -eq 0) { return '$' + [math]::Round($Amount).ToString('0', $culture) }
+  return '$' + $Amount.ToString('0.0', $culture)
+}
+
+# Forma curta do painel: "~$6,9 hj . $948 7d"; "+" marca piso (modelo sem preco conhecido).
+function Get-CostText {
+  param($Provider)
+  $cost = Get-ProviderCost $Provider
+  if (-not $cost) { return '' }
+  $plus = if ($cost.partial) { '+' } else { '' }
+  return ('{0}{1} hj {2} {3}{4} 7d' -f [char] 0x2248, (Format-UsdShort ([double] $cost.todayUsd)), [char] 0x00B7, (Format-UsdShort ([double] $cost.weekUsd)), $plus)
+}
+
+function Get-CostAccessibleText {
+  param($Provider)
+  $cost = Get-ProviderCost $Provider
+  if (-not $cost) { return '' }
+  $culture = [System.Globalization.CultureInfo]::GetCultureInfo('pt-BR')
+  $text = 'custo estimado em API: US$ {0} hoje, US$ {1} em 7 dias' -f ([double] $cost.todayUsd).ToString('0.00', $culture), ([double] $cost.weekUsd).ToString('0.00', $culture)
+  if ($cost.partial) { $text += ', sem contar modelos sem preco conhecido' }
+  return $text
 }
 
 function Get-VisibleProviders {
@@ -243,6 +282,8 @@ function Get-PanelAccessibleText {
     if ($provider.stale -or (Test-ProviderOutdated $provider $Now)) { $tags += 'dados em cache' }
     $failure = Get-FailureLabel $provider
     if ($failure) { $tags += 'falha: ' + $failure }
+    $costText = Get-CostAccessibleText $provider
+    if ($costText) { $tags += $costText }
     if ($tags.Count) { $name += ' (' + ($tags -join ', ') + ')' }
     if (-not $provider.windows) {
       '{0}: sem dados.' -f $name

@@ -36,6 +36,7 @@ o snapshot que a bandeja lê.
 | `src/collectors/codex.ts` | Sobe o `codex app-server` e lê a cota principal e as janelas próprias do Spark na mesma consulta. |
 | `src/collectors/antigravity.ts` | Executa `/usage` no CLI oficial, valida TSV, converte restante em usado e preserva cache/esperas. |
 | `src/http.ts` | HTTP com prazo total, cancelamento, limite de tamanho, resposta incompleta e nova tentativa com as raízes da loja do Windows quando o emissor do certificado não é reconhecido. |
+| `src/cost.ts` | Estimativa do valor equivalente em API: lê os registros de sessão do Claude Code e do Codex de forma incremental, aplica a tabela de preços por modelo e devolve os totais de hoje e de 7 dias. |
 | `src/diagnostics.ts` | Log local com campos permitidos e rotação de dois arquivos de 256 KiB. |
 | `tray/state.ps1` | Cálculos de idade, tempo, avisos, filtros de provedores e backoff de relançamento do daemon, sem GUI, compartilhados com os testes. |
 | `src/daemon.ts` | Processo Node de vida longa que publica o snapshot em disco para a bandeja. |
@@ -262,6 +263,37 @@ agy --print '/usage' --print-timeout 10s
 O CLI informa a cota **disponível**; o TokenBar mostra a cota **usada**. Portanto, `100%`
 no relatório do CLI corresponde a `0%` na barra. Se o comando não retornar cotas, confira
 a instalação e o login no CLI oficial. Não copie credenciais para o TokenBar.
+
+## Estimativa de custo
+
+`CostTracker` (`src/cost.ts`) roda no daemon fora do `UsageManager`: 15 s depois da
+partida, a cada 5 minutos e no "Atualizar agora". O resultado vai em `snapshot.costs`
+(`{ provider, todayUsd, weekUsd, partial?, computedAt }`), anexado por `daemon.ts` a cada
+publicação; o último valor salvo (`restoreCosts`) fica no painel até a primeira leitura.
+
+- **Fontes**: `$CLAUDE_CONFIG_DIR/projects` (padrão `~/.claude/projects`, subagentes
+  incluídos) e `$CODEX_HOME/sessions` (padrão `~/.codex/sessions`). Só arquivos `.jsonl`
+  alterados nos últimos 8 dias.
+- **Incremental**: por arquivo guarda o deslocamento lido e o resto de uma linha gravada
+  pela metade; arquivo menor que o deslocamento é relido do início. Medido com ~750 MB em
+  8 dias: 4,5 s na primeira leitura, ~0,15 s nas seguintes, ~12 MB de memória.
+- **Claude**: linhas `type: "assistant"` com `message.usage`. O Claude Code grava uma linha
+  por bloco da resposta, todas com o mesmo uso; a soma conta cada `message.id` +
+  `requestId` uma vez, também entre arquivos (sessões retomadas). As repetições ficam
+  guardadas, para a resposta continuar contando se o arquivo onde ela apareceu primeiro for
+  reescrito. Preço por milhão de tokens com entrada, saída, leitura de cache, escrita de
+  5 min (1,25x a entrada) e de 1 h (2x); `speed: "fast"` dobra; busca na web a US$ 0,01. A
+  tabela foi conferida contra o `costUSD` por modelo que o próprio Claude Code grava nas
+  linhas `cost-state` (razão 1,0000).
+- **Codex**: `token_usage_record` com o modelo do `turn_context` do mesmo turno.
+  `input_tokens` já inclui `cached_input_tokens` e `output_tokens` já inclui o raciocínio
+  (conferido nos registros). Acima de 272 mil tokens de entrada vale a tabela longa. Preços
+  de fontes públicas, sem confirmação na página oficial da OpenAI.
+- **Sem preço**: modelo fora da tabela (ex.: `codex-auto-review`) conta zero e marca
+  `partial`; a bandeja mostra `+` no total de 7 dias.
+- **Janela**: `hj` desde a meia-noite local; `7d` são os últimos 7 dias corridos.
+- **Tabela de preços**: fica no código e precisa ser atualizada à mão quando um preço ou
+  um modelo novo surgir.
 
 ## Estado em disco (bandeja)
 

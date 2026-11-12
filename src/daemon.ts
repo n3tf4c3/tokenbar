@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { CostTracker, restoreCosts } from './cost';
 import { UsageSnapshot } from './usage';
 import { UsageManager } from './usageManager';
 import { createDiagnosticLogger } from './diagnostics';
@@ -9,6 +10,7 @@ const stateDir = path.join(process.env.LOCALAPPDATA ?? os.homedir(), 'tokenbar')
 const snapshotPath = path.join(stateDir, 'snapshot.json');
 const refreshFlagPath = path.join(stateDir, 'refresh.flag');
 const intervalSeconds = Math.min(3600, Math.max(15, Number(process.argv[2]) || 60));
+const COST_INTERVAL_MS = 5 * 60_000;
 
 fs.mkdirSync(stateDir, { recursive: true });
 const diagnose = createDiagnosticLogger(stateDir);
@@ -68,11 +70,28 @@ function flushSnapshot(): void {
   }
 }
 
-const manager = new UsageManager(readCachedSnapshot(), { onDiagnostic: diagnose });
-manager.onDidUpdate(writeSnapshot);
+const cachedSnapshot = readCachedSnapshot();
+const manager = new UsageManager(cachedSnapshot, { onDiagnostic: diagnose });
+const costTracker = new CostTracker();
+// A estimativa anterior continua no painel até a primeira leitura dos registros terminar.
+let latestCosts = restoreCosts(cachedSnapshot?.costs);
+
+function publish(snapshot: UsageSnapshot): void {
+  writeSnapshot(latestCosts ? { ...snapshot, costs: latestCosts } : snapshot);
+}
+manager.onDidUpdate(publish);
 
 function refresh(options?: { force?: boolean }): void {
   manager.refresh(options).catch(() => diagnose({ event: 'unexpected-error' }));
+}
+
+function refreshCosts(): void {
+  const started = Date.now();
+  costTracker.refresh().then(costs => {
+    latestCosts = costs.length ? costs : undefined;
+    diagnose({ event: 'cost', durationMs: Date.now() - started });
+    publish(manager.getSnapshot());
+  }, () => diagnose({ event: 'cost-error' }));
 }
 
 fs.watch(stateDir, (_event, filename) => {
@@ -86,9 +105,13 @@ fs.watch(stateDir, (_event, filename) => {
     return;
   }
   refresh({ force: true });
+  refreshCosts();
 });
 
 process.on('unhandledRejection', () => diagnose({ event: 'unexpected-error' }));
 
 refresh();
 setInterval(() => refresh(), intervalSeconds * 1000);
+// A primeira leitura dos registros é a mais pesada; espera a coleta das cotas.
+setTimeout(refreshCosts, 15_000);
+setInterval(refreshCosts, COST_INTERVAL_MS);

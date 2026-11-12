@@ -7,6 +7,16 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não publicado]
 
+### Estimativa de custo e painel mais compacto
+
+- O painel mostra, ao lado do Claude e do Codex, quanto o uso da assinatura custaria na API
+  (`≈$12 hj · $186 7d`). A conta sai dos registros locais das sessões, só dos contadores de
+  tokens, com a tabela de preços por modelo; cada resposta conta uma vez. `+` marca piso
+  quando há modelo sem preço conhecido. Não é cobrança e fica separado da cota.
+- Painel mais compacto: 300 px de largura em vez de 372, linhas mais baixas, título "Cotas"
+  e renovação abreviada (`2d 1h` em vez de `renova em 2d 1h`). O texto para leitores de
+  tela continua por extenso e passa a incluir a estimativa.
+
 ### Token do Claude renovado sem abrir o terminal
 
 - O token de acesso do Claude Code dura 8 horas; depois de o PC ficar desligado à noite, a

@@ -3,7 +3,7 @@ import * as path from 'path';
 import { FailureKind, ProviderId, ProviderSnapshot, safeFailureCode } from './usage';
 
 export interface DiagnosticEvent {
-  event: 'collection' | 'daemon-start' | 'publish-error' | 'listener-error' | 'unexpected-error';
+  event: 'collection' | 'daemon-start' | 'publish-error' | 'listener-error' | 'unexpected-error' | 'cost' | 'cost-error';
   provider?: ProviderId;
   status?: ProviderSnapshot['status'];
   failureKind?: FailureKind;

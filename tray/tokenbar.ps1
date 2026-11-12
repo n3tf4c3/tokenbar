@@ -67,15 +67,15 @@ $script:Fonts = @{
 }
 
 $script:Layout = @{
-  Width       = 372
-  Pad         = 14
-  HeaderH     = 30
-  ProviderH   = 24
-  RowH        = 24
-  ProviderGap = 10
-  LabelW      = 56
-  BarW        = 96
-  ValueW      = 42
+  Width       = 300
+  Pad         = 10
+  HeaderH     = 22
+  ProviderH   = 20
+  RowH        = 18
+  ProviderGap = 6
+  LabelW      = 60
+  BarW        = 84
+  ValueW      = 38
 }
 
 function Get-Tone {
@@ -133,7 +133,7 @@ function Write-Panel {
   $pad = $script:Layout.Pad
   $y = $pad
 
-  $Graphics.DrawString('Cotas das assinaturas', $script:Fonts.Title, $textBrush, [float] $pad, [float] $y)
+  $Graphics.DrawString('Cotas', $script:Fonts.Title, $textBrush, [float] $pad, [float] $y)
   $stampText = 'sem dados'
   if ($script:Snapshot) {
     $collected = Get-Date
@@ -142,7 +142,7 @@ function Write-Panel {
     }
   }
   $stampSize = $Graphics.MeasureString($stampText, $script:Fonts.Small)
-  $Graphics.DrawString($stampText, $script:Fonts.Small, $mutedBrush, [float] ($Width - $pad - $stampSize.Width), [float] ($y + 4))
+  $Graphics.DrawString($stampText, $script:Fonts.Small, $mutedBrush, [float] ($Width - $pad - $stampSize.Width), [float] ($y + 3))
   $y += $script:Layout.HeaderH
 
   $providers = @(Get-VisibleProviders)
@@ -157,6 +157,7 @@ function Write-Panel {
 
   foreach ($provider in $providers) {
     $Graphics.DrawString([string] $provider.label, $script:Fonts.Provider, $textBrush, [float] $pad, [float] $y)
+    $nameWidth = $Graphics.MeasureString([string] $provider.label, $script:Fonts.Provider).Width
     $tag = [string] $provider.plan
     if ($provider.stale -or (Test-ProviderOutdated $provider)) {
       if ($tag) { $tag += ' ' + [char] 0x00B7 + ' cache' } else { $tag = 'cache' }
@@ -165,14 +166,27 @@ function Write-Panel {
     if ($failure) {
       if ($tag) { $tag += ' ' + [char] 0x00B7 + ' ' + $failure } else { $tag = $failure }
     }
+    $tagX = $Width - $pad
     if ($tag) {
       $tagSize = $Graphics.MeasureString($tag, $script:Fonts.Small)
-      $Graphics.DrawString($tag, $script:Fonts.Small, $mutedBrush, [float] ($Width - $pad - $tagSize.Width), [float] ($y + 3))
+      $tagX = $Width - $pad - $tagSize.Width
+      $Graphics.DrawString($tag, $script:Fonts.Small, $mutedBrush, [float] $tagX, [float] ($y + 3))
+    }
+    # Custo estimado ao lado do nome; se nao couber antes da etiqueta, fica so o valor do dia.
+    $costText = Get-CostText $provider
+    if ($costText) {
+      $costX = $pad + $nameWidth + 2
+      if ($costX + $Graphics.MeasureString($costText, $script:Fonts.Small).Width -gt $tagX - 6) {
+        $costText = ($costText -split (' ' + [char] 0x00B7 + ' '))[0]
+      }
+      if ($costX + $Graphics.MeasureString($costText, $script:Fonts.Small).Width -le $tagX - 6) {
+        $Graphics.DrawString($costText, $script:Fonts.Small, $mutedBrush, [float] $costX, [float] ($y + 3))
+      }
     }
     $y += $script:Layout.ProviderH
 
     if (-not $provider.windows) {
-      $Graphics.DrawString('Sem dados.', $script:Fonts.Small, $mutedBrush, [float] $pad, [float] ($y + 4))
+      $Graphics.DrawString('Sem dados.', $script:Fonts.Small, $mutedBrush, [float] $pad, [float] ($y + 2))
       $y += $script:Layout.RowH + $script:Layout.ProviderGap
       continue
     }
@@ -184,10 +198,10 @@ function Write-Panel {
       $tone = if ($old) { $script:Colors.Muted } else { Get-Tone $used }
       $toneBrush = New-Object System.Drawing.SolidBrush $tone
 
-      $Graphics.DrawString((Get-WindowShortLabel $window), $script:Fonts.Body, $mutedBrush, [float] $pad, [float] ($y + 4))
+      $Graphics.DrawString((Get-WindowShortLabel $window), $script:Fonts.Body, $mutedBrush, [float] $pad, [float] ($y + 1))
 
       $barX = $pad + $script:Layout.LabelW
-      $barY = $y + 10
+      $barY = $y + 7
       $trackRect = New-Object System.Drawing.RectangleF([float] $barX, [float] $barY, [float] $script:Layout.BarW, 6)
       $trackPath = Get-RoundedPath $trackRect 3
       $Graphics.FillPath($trackBrush, $trackPath)
@@ -203,11 +217,11 @@ function Write-Panel {
 
       $valueX = $barX + $script:Layout.BarW + 10
       $valueText = '{0:0}%' -f $used
-      $Graphics.DrawString($valueText, $script:Fonts.Value, $toneBrush, [float] $valueX, [float] ($y + 3))
+      $Graphics.DrawString($valueText, $script:Fonts.Value, $toneBrush, [float] $valueX, [float] $y)
 
-      $resetText = Get-Countdown ([string] $window.resetsAt)
+      $resetText = Get-Countdown ([string] $window.resetsAt) -Short
       if ($resetText) {
-        $Graphics.DrawString($resetText, $script:Fonts.Small, $mutedBrush, [float] ($valueX + $script:Layout.ValueW), [float] ($y + 4))
+        $Graphics.DrawString($resetText, $script:Fonts.Small, $mutedBrush, [float] ($valueX + $script:Layout.ValueW), [float] ($y + 1))
       }
       $toneBrush.Dispose()
       $y += $script:Layout.RowH

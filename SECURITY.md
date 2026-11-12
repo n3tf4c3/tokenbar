@@ -28,6 +28,7 @@ severidade. Este é um projeto pessoal sem SLA formal — o compromisso é de me
 | `~/.claude/.credentials.json` | Leitura | Extrair o token OAuth da sessão do Claude Code |
 | `https://api.anthropic.com/api/oauth/usage` | HTTPS GET | Consultar as janelas de cota da assinatura |
 | Loja de certificados raiz do Windows | Leitura | Validar a conexão quando um antivírus ou proxy inspeciona o HTTPS (veja abaixo) |
+| `~/.claude/projects/**/*.jsonl` e `~/.codex/sessions/**/*.jsonl` | Leitura | Somar os tokens de cada resposta para a estimativa de custo (veja abaixo) |
 | `claude auth status` | Processo filho nativo, só com o token local vencido | Pedir ao Claude Code que renove o próprio token |
 | `codex app-server --stdio` | Processo filho | Consultar `account/rateLimits/read` |
 | `agy --print /usage --print-timeout 10s` | Processo filho nativo | Ler cotas pelo comando oficial do Antigravity |
@@ -76,10 +77,25 @@ O que isso significa:
 Para não depender disso, exclua `api.anthropic.com` (ou o `node.exe`) da verificação de
 conexões criptografadas do antivírus.
 
+### Registros de sessão (estimativa de custo)
+
+Os registros de sessão do Claude Code e do Codex guardam o conteúdo das conversas. Para a
+estimativa de custo, o daemon os lê com estes limites:
+
+- Só arquivos alterados nos últimos 8 dias, sem seguir links simbólicos, e só o que foi
+  acrescentado desde a leitura anterior.
+- Uma linha só é interpretada se contém o marcador de uso (`"usage"` no Claude,
+  `"token_usage_record"` ou `"turn_context"` no Codex); as demais nem viram texto. Linhas
+  acima de 64 MiB são descartadas.
+- Da linha interpretada ficam em memória apenas modelo, contadores de tokens, horário e
+  identificador da resposta. Vão para o snapshot só os totais em dólar por provedor.
+- Nada desses arquivos é gravado, registrado em log ou enviado pela rede. O diagnóstico
+  registra só a duração da leitura (`event: "cost"`) ou a falha (`"cost-error"`).
+
 ### O que fica em disco
 
 `%LOCALAPPDATA%\tokenbar\snapshot.json` contém apenas: percentuais de uso, horários de
-renovação, rótulos de janela, nome do plano (ex.: `max`), mensagens de diagnóstico e o
+renovação, rótulos de janela, nome do plano (ex.: `max`), totais da estimativa de custo, mensagens de diagnóstico e o
 código técnico da última falha (ex.: `HTTP_503`, `SELF_SIGNED_CERT_IN_CHAIN`). É
 gravado com as permissões padrão do perfil do usuário — ou seja, legível por processos que
 já rodam com a sua conta. Trate o nome do plano como a informação mais sensível ali.

@@ -25,6 +25,21 @@ Assert-Equal (Get-Countdown '2026-09-07T07:00:00Z' $now) 'renova em 1d 18h' 'Day
 Assert-Equal (Get-Countdown '2026-09-05T13:00:20Z' $now) 'renova em 1m' 'Less than a minute never shows zero'
 Assert-Equal (Get-Countdown '2026-09-05T12:00:00Z' $now) 'renovando' 'Expired window keeps the compact countdown'
 Assert-Equal (Get-Countdown 'invalid' $now) '' 'Invalid dates are handled'
+Assert-Equal (Get-Countdown '2026-09-07T07:00:00Z' $now -Short) '1d 18h' 'Panel countdown drops the prefix'
+Assert-Equal (Get-Countdown '2026-09-05T13:00:20Z' $now -Short) '1m' 'Short countdown never shows zero'
+Assert-Equal (Get-Countdown '2026-09-05T12:00:00Z' $now -Short) 'renov.' 'Short countdown abbreviates an expired window'
+
+$dot = [char] 0x00B7; $approx = [char] 0x2248
+$script:Snapshot = [pscustomobject]@{providers=@(); costs=@(
+  [pscustomobject]@{provider='claude';todayUsd=6.86;weekUsd=947.94;computedAt=$now.ToString('o')},
+  [pscustomobject]@{provider='codex';todayUsd=0;weekUsd=1056.53;partial=$true;computedAt=$now.ToString('o')})}
+Assert-Equal (Get-CostText ([pscustomobject]@{provider='claude'})) "$approx`$6,9 hj $dot `$948 7d" 'Cost line is short, in pt-BR decimals'
+Assert-Equal (Get-CostText ([pscustomobject]@{provider='codex'})) "$approx`$0 hj $dot `$1,1k+ 7d" 'Unpriced models mark the week total as a floor'
+Assert-Equal (Get-CostText ([pscustomobject]@{provider='antigravity'})) '' 'Providers without an estimate show no cost'
+Assert-Equal (Get-CostAccessibleText ([pscustomobject]@{provider='claude'})) 'custo estimado em API: US$ 6,86 hoje, US$ 947,94 em 7 dias' 'Accessible cost keeps full values'
+$script:Snapshot.costs = @([pscustomobject]@{provider='claude';todayUsd='6';weekUsd=1})
+Assert-Equal (Get-CostText ([pscustomobject]@{provider='claude'})) '' 'A malformed estimate is ignored'
+$script:Snapshot = $null
 
 $claude = [pscustomobject]@{provider='claude';label='Claude';status='unavailable';stale=$true;failureKind='auth';message='Session expired. Use /login.';collectedAt=$now.AddMinutes(-6).ToString('o');windows=@([pscustomobject]@{id='five_hour';usedPercent=93;resetsAt=$now.AddHours(-1).ToString('o')})}
 $codex = [pscustomobject]@{provider='codex';label='Codex';status='ok';collectedAt=$now.ToString('o');windows=@([pscustomobject]@{id='seven_day';usedPercent=31;resetsAt=$now.AddHours(5).ToString('o')})}

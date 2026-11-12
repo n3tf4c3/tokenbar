@@ -8,6 +8,7 @@ confundi-la com as outras três coisas que costumam ser chamadas de "tokens":
 | Tokens da conversa / janela de contexto | ❌ não |
 | Custo de chamadas feitas com chave de API | ❌ não |
 | Cota da assinatura em janelas móveis (5h, semanal) | ✅ sim |
+| Valor equivalente em API do uso da assinatura | ≈ estimativa, separada da cota |
 
 O TokenBar é um **indicador na bandeja do Windows**. Ele funciona ao lado de qualquer
 editor (VS Code, Zed, Antigravity ou outro), sem depender de nenhum deles.
@@ -60,11 +61,11 @@ no máximo uma vez por minuto e desiste após 5 falhas seguidas; "Atualizar agor
 
 ## Uso
 
-![Painel da bandeja do Windows: uma linha por janela de cota, com barra, percentual usado e tempo até a renovação. Abaixo, o ícone como aparece na bandeja.](docs/imagens/bandeja-windows.png)
+![Painel da bandeja do Windows: por provedor, a estimativa de custo ao lado do nome e uma linha por janela de cota, com barra, percentual usado e tempo até a renovação. Abaixo, o ícone como aparece na bandeja.](docs/imagens/bandeja-windows.png)
 
 *Painel da bandeja. Embaixo, o ícone nos dois tamanhos que o Windows pede — ele mostra o
 percentual mais crítico e muda de cor conforme a cota aperta. Imagem gerada pelo próprio
-projeto com `tray\tokenbar.ps1 -PreviewPath`.*
+projeto com `tray\tokenbar.ps1 -PreviewPath`, a partir de um snapshot sintético.*
 
 - `dist/daemon.js` mantém o `UsageManager` vivo — preservando o cache de 5 minutos e o
   backoff de 429 do Claude — e publica `%LOCALAPPDATA%\tokenbar\snapshot.json` de forma
@@ -99,6 +100,18 @@ O painel compacto mostra as barras, percentuais e tempo até a renovação. Como
 desenhado, e não montado com controles, o mesmo conteúdo vai em texto para leitores de
 tela: o nome da janela do painel lista, por provedor, cada janela com o percentual usado
 e a renovação, atualizado a cada leitura do snapshot.
+### Estimativa de custo
+
+Ao lado do nome do Claude e do Codex aparece `≈$12 hj · $186 7d`: quanto o uso da
+assinatura custaria se as mesmas chamadas fossem pagas por token na API, desde a meia-noite
+(`hj`) e nos últimos 7 dias. **Não é cobrança**: a assinatura tem preço fixo. A conta sai
+dos registros locais das sessões (`~/.claude/projects` e `~/.codex/sessions`), somando os
+tokens de cada resposta pela tabela de preços de cada modelo; cada resposta conta uma vez,
+mesmo repetida em sessões retomadas. Um `+` depois do total da semana indica uso de um
+modelo sem preço conhecido, que fica de fora (o valor é um piso). O Antigravity não tem
+estimativa. A primeira leitura depois de abrir a bandeja leva alguns segundos; as
+seguintes, a cada 5 minutos, leem só o que foi acrescentado.
+
 O indicador discreto `cache` e a cor cinza identificam dados antigos. Janelas vencidas
 ficam sem preenchimento até uma nova coleta, sem presumir 0%. O ícone mostra o maior
 percentual válido entre os provedores habilitados, ou `?` quando não há uma leitura atual.
@@ -240,7 +253,10 @@ a instalação e o login no CLI oficial. Não copie credenciais para o TokenBar.
   registra a saída bruta do Antigravity nem URLs de login; as mensagens de falha são locais.
 - Não há telemetria. Não há servidor do TokenBar.
 - O painel da bandeja e o snapshot em disco recebem apenas: percentuais, horários de renovação, nome
-  do plano e mensagens de diagnóstico.
+  do plano, mensagens de diagnóstico e os totais da estimativa de custo.
+- Para a estimativa, o daemon lê os registros de sessão do Claude Code e do Codex. Só
+  interpreta as linhas de uso e guarda modelo, contadores de tokens, horário e
+  identificador da resposta; o texto das conversas não é guardado, gravado nem registrado.
 - O snapshot fica em `%LOCALAPPDATA%\tokenbar\snapshot.json`, com as permissões padrão do
   perfil do usuário.
 

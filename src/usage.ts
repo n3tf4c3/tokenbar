@@ -1,3 +1,5 @@
+import type { CostEstimate } from './cost';
+
 export type ProviderId = 'claude' | 'codex' | 'antigravity';
 export const PROVIDER_LABELS: Record<ProviderId, string> = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
 export type FailureKind = 'auth' | 'rate-limit' | 'network' | 'tls' | 'timeout' | 'invalid-response';
@@ -48,6 +50,8 @@ export interface ProviderSnapshot {
 export interface UsageSnapshot {
   collectedAt: string;
   providers: ProviderSnapshot[];
+  /** Estimativa do valor equivalente em API (`src/cost.ts`); não é cobrança. */
+  costs?: CostEstimate[];
 }
 
 export interface UsageCollector {
