@@ -1,4 +1,4 @@
-import { execFile } from 'child_process';
+import { ChildProcess, execFile, ExecFileException, ExecFileOptions } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -40,6 +40,16 @@ interface ClaudeCredentials {
   claudeAiOauth?: { accessToken?: string; subscriptionType?: string; expiresAt?: number };
 }
 
+/**
+ * Resultado de uma tentativa de renovação, só com códigos fixos: o texto do CLI nunca sai daqui.
+ * `code` vem da classificação do log de depuração (`REFRESH_HTTP_400`, `REFRESH_LOCKED`…) ou,
+ * sem log, da falha do processo (`NO_CLI`, `TIMEOUT`, `SPAWN_ERROR`…).
+ */
+export interface RenewResult { code: string; exitCode?: number; timedOut?: boolean }
+
+/** O que o coletor relata de cada renovação, para o diagnóstico local. */
+export interface RenewReport extends RenewResult { renewed: boolean; durationMs: number }
+
 interface ClaudeCollectorOptions {
   now?: () => number;
   readCredentials?: (signal?: AbortSignal) => Promise<ClaudeCredentials>;
@@ -48,7 +58,9 @@ interface ClaudeCollectorOptions {
    * Pede ao Claude Code que renove o token vencido. Sem esta opção o coletor não executa
    * nada (é o caso dos testes); o daemon passa `renewClaudeSession`.
    */
-  renewSession?: (signal?: AbortSignal) => Promise<boolean>;
+  renewSession?: (signal?: AbortSignal) => Promise<boolean | RenewResult>;
+  /** Recebe o resultado de cada renovação tentada. Falha aqui não interrompe a coleta. */
+  onRenew?: (report: RenewReport) => void;
 }
 
 /**
@@ -75,25 +87,99 @@ export function findClaudeCode(env: NodeJS.ProcessEnv = process.env, platform: N
   return candidates.find(isFile);
 }
 
+/** Só as linhas sobre OAuth/refresh contam; "CA certs:" aparece em toda execução e não é falha. */
+export function classifyRenewLog(log: string): string {
+  const text = log.split(/\r?\n/).filter(line => /oauth|refresh/i.test(line) && !/CA certs:/.test(line)).join('\n');
+  const status = /OAuth (?:token )?refresh failed[^\n]*?status code (\d{3})\b/i.exec(text);
+  if (status) { return `REFRESH_HTTP_${status[1]}`; }
+  if (/refresh lock contention|holding the refresh lo|Could not acquire refresh lock|lock compromised|Refresh lock was compromised/i.test(text)) { return 'REFRESH_LOCKED'; }
+  if (/Failed to acquire refresh lock|legacy-lock acquire failed|refresh lock owner record|refresh lock takeover/i.test(text)) { return 'REFRESH_LOCK_ERROR'; }
+  if (/\b(?:SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_GET_ISSUER_CERT(?:_LOCALLY)?|UNABLE_TO_VERIFY_LEAF_SIGNATURE|CERT_HAS_EXPIRED|DEPTH_ZERO_SELF_SIGNED_CERT|ERR_TLS_CERT_ALTNAME_INVALID)\b/.test(text)) { return 'REFRESH_TLS'; }
+  if (/\b(?:ECONNRESET|ETIMEDOUT|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH)\b/.test(text)) { return 'REFRESH_NETWORK'; }
+  if (/no longer valid|has been revoked|token revoked|account is on hold/i.test(text)) { return 'REFRESH_REJECTED'; }
+  if (/OAuth (?:token )?refresh failed/i.test(text)) { return 'REFRESH_FAILED'; }
+  if (/Acquired refresh lock/i.test(text)) { return 'REFRESH_ATTEMPTED'; }
+  return 'NO_REFRESH';
+}
+
+const RENEW_LOG_PREFIX = 'auth-status-';
+const MAX_RENEW_LOG_BYTES = 1024 * 1024;
+
+type ExecFileLike = (file: string, args: string[], options: ExecFileOptions,
+  callback: (error: ExecFileException | null) => void) => Pick<ChildProcess, 'stdin'>;
+
+export interface RenewDependencies {
+  /** `null` simula o Claude Code ausente; sem a chave, o executável é procurado. */
+  executable?: string | null;
+  /** Pasta própria dos logs de depuração temporários (padrão: `%TEMP%\tokenbar-renew`). */
+  directory?: string;
+  execFile?: ExecFileLike;
+}
+
+/** Lê o fim do log (as linhas da renovação ficam no final) e o apaga, mesmo se a leitura falhar. */
+async function consumeRenewLog(file: string): Promise<string | undefined> {
+  try {
+    const handle = await fs.promises.open(file, 'r');
+    try {
+      const { size } = await handle.stat();
+      const length = Math.min(size, MAX_RENEW_LOG_BYTES);
+      const buffer = Buffer.alloc(length);
+      await handle.read(buffer, 0, length, size - length);
+      return buffer.toString('utf8');
+    } finally { await handle.close(); }
+  } catch { return undefined; } finally { await fs.promises.rm(file, { force: true }).catch(() => undefined); }
+}
+
+/** Remove logs que uma execução anterior não conseguiu apagar (daemon encerrado no meio). */
+async function clearRenewLogs(directory: string): Promise<void> {
+  for (const name of await fs.promises.readdir(directory).catch(() => [] as string[])) {
+    if (name.startsWith(RENEW_LOG_PREFIX) && name.endsWith('.log')) {
+      await fs.promises.rm(path.join(directory, name), { force: true }).catch(() => undefined);
+    }
+  }
+}
+
 /**
  * Roda `claude auth status`, que renova o token vencido com o refresh token e regrava
  * `~/.claude/.credentials.json`. Quem grava é o Claude Code; o TokenBar só relê o arquivo.
- * A saída (que traz dados da conta) é descartada sem ser lida.
+ * A saída (que traz dados da conta) é descartada sem ser lida. O log de depuração do CLI vai
+ * para um arquivo temporário, lido só para classificar o resultado em código fixo e apagado.
  */
-export function renewClaudeSession(signal?: AbortSignal): Promise<boolean> {
-  return new Promise(resolve => {
-    const executable = findClaudeCode();
-    if (!executable || signal?.aborted) { resolve(false); return; }
+export async function renewClaudeSession(signal?: AbortSignal, dependencies: RenewDependencies = {}): Promise<RenewResult> {
+  const executable = 'executable' in dependencies ? dependencies.executable : findClaudeCode();
+  if (!executable) { return { code: 'NO_CLI' }; }
+  if (signal?.aborted) { return { code: 'ABORTED' }; }
+  const directory = dependencies.directory ?? path.join(os.tmpdir(), 'tokenbar-renew');
+  const run: ExecFileLike = dependencies.execFile ?? execFile;
+  let logFile: string | undefined;
+  try {
+    await fs.promises.mkdir(directory, { recursive: true });
+    await clearRenewLogs(directory);
+    logFile = path.join(directory, `${RENEW_LOG_PREFIX}${process.pid}-${Date.now()}.log`);
+  } catch { logFile = undefined; }
+
+  const outcome = await new Promise<{ exitCode?: number; failure?: string }>(resolve => {
     try {
-      const child = execFile(executable, ['auth', 'status'], {
+      const child = run(executable, [...(logFile ? ['--debug-file', logFile] : []), 'auth', 'status'], {
         cwd: os.tmpdir(), windowsHide: true, timeout: 8_000, maxBuffer: 64 * 1024, signal,
         // A consulta não deve disparar a atualização do próprio CLI.
         env: { ...process.env, DISABLE_AUTOUPDATER: '1' }
-      }, error => resolve(!error));
+      }, error => {
+        if (!error) { resolve({ exitCode: 0 }); return; }
+        if (signal?.aborted) { resolve({ failure: 'ABORTED' }); return; }
+        if (error.killed) { resolve({ failure: 'TIMEOUT' }); return; }
+        resolve(typeof error.code === 'number' && Number.isSafeInteger(error.code) ? { exitCode: error.code } : { failure: 'SPAWN_ERROR' });
+      });
       child.stdin?.on('error', () => undefined);
       child.stdin?.end();
-    } catch { resolve(false); }
+    } catch { resolve({ failure: 'SPAWN_ERROR' }); }
   });
+
+  const log = logFile ? await consumeRenewLog(logFile) : undefined;
+  return {
+    code: log !== undefined ? classifyRenewLog(log) : outcome.failure ?? 'NO_DEBUG_LOG',
+    exitCode: outcome.exitCode, timedOut: outcome.failure === 'TIMEOUT' || undefined
+  };
 }
 
 function isExpired(expiresAt: unknown, now: number): boolean {
@@ -252,10 +338,19 @@ export class ClaudeCollector implements UsageCollector {
   private async renew(signal?: AbortSignal): Promise<ClaudeCredentials | undefined> {
     if (!this.options.renewSession || (this.lastRenewAt > 0 && this.now() - this.lastRenewAt < MIN_RENEW_MS)) { return undefined; }
     this.lastRenewAt = this.now();
-    let renewed = false;
-    try { renewed = await this.options.renewSession(signal); } catch { renewed = false; }
+    const started = Date.now();
+    let result: RenewResult;
+    try {
+      const value = await this.options.renewSession(signal);
+      result = typeof value === 'boolean' ? { code: value ? 'RENEWED' : 'FAILED' } : value;
+    } catch { result = { code: 'RENEW_ERROR' }; }
     if (signal?.aborted) { throw new CollectionError('A consulta do Claude foi cancelada.', 'timeout'); }
-    return renewed ? this.readCredentials(signal) : undefined;
+    // Relê mesmo quando o CLI termina com erro: o arquivo pode ter sido renovado assim mesmo.
+    const credentials = await this.readCredentials(signal);
+    const token = credentials?.claudeAiOauth?.accessToken;
+    const renewed = typeof token === 'string' && !!token && !isExpired(credentials?.claudeAiOauth?.expiresAt, this.now());
+    try { this.options.onRenew?.({ ...result, renewed, durationMs: Date.now() - started }); } catch { /* Diagnóstico não interrompe a coleta. */ }
+    return renewed ? credentials : undefined;
   }
 
   private failed(message: string, status: 'unavailable' | 'error', kind: FailureKind, code?: string): ProviderSnapshot {

@@ -152,7 +152,17 @@ motivo curto ao lado de `cache` no cabeçalho do provedor e no texto acessível:
   executável nativo (`~/.local/bin`, `bin/claude.exe` do pacote npm global ou o PATH, nunca
   shims `.cmd`/`.ps1`) e roda `claude auth status` sem shell, com prazo de 8 s,
   `DISABLE_AUTOUPDATER=1` e a saída descartada. O próprio Claude Code renova e regrava o
-  arquivo, sob o controle de concorrência dele; o coletor relê e segue com o token novo.
+  arquivo, sob o controle de concorrência dele; o coletor relê (mesmo se o CLI terminar com
+  erro) e segue com o token novo.
+  O CLI recebe `--debug-file` apontando para `%TEMP%\tokenbar-renew\auth-status-*.log`;
+  `classifyRenewLog` lê só as linhas sobre OAuth/refresh e as reduz a um código fixo
+  (`REFRESH_HTTP_<status>`, `REFRESH_LOCKED`, `REFRESH_LOCK_ERROR`, `REFRESH_TLS`,
+  `REFRESH_NETWORK`, `REFRESH_REJECTED`, `REFRESH_FAILED`, `REFRESH_ATTEMPTED` ou
+  `NO_REFRESH`); sem log, o código é a falha do processo (`NO_CLI`, `TIMEOUT`,
+  `SPAWN_ERROR`, `ABORTED`, `NO_DEBUG_LOG`). O log é apagado logo depois, e sobras de uma
+  execução interrompida somem na tentativa seguinte. O coletor relata cada tentativa por
+  `onRenew`, e o daemon grava `event: "claude-renew"` no diagnóstico com o código, o
+  `exitCode`, a duração e `status: "ok"` só quando o arquivo relido tem token válido.
   Há no máximo uma tentativa a cada `MIN_RENEW_MS` (15 min). Se a renovação falhar ou o
   arquivo continuar vencido, a falha segue `TOKEN_EXPIRED`, com a orientação de rodar
   `claude` no terminal ou `/login`. Sem `renewSession` (os testes), nada é executado.
@@ -306,8 +316,9 @@ Diretório: `%LOCALAPPDATA%\tokenbar\` (fallback para o home do usuário).
 | `tray-config.json` | `tokenbar.ps1`, no menu "Provedores" | `tokenbar.ps1` |
 
 O daemon grava `diagnostics.jsonl` e `diagnostics.previous.jsonl`, com rotação em 256 KiB.
-Os logs contêm apenas estado, categoria e código da falha, `tlsTrust`, duração e horários;
-mensagens remotas e credenciais não entram.
+Os logs contêm apenas estado, categoria e código da falha, `tlsTrust`, duração, horários e,
+nas renovações do Claude (`claude-renew`), o código de saída do CLI; mensagens remotas e
+credenciais não entram.
 
 A escrita atômica evita que a bandeja leia um JSON pela metade. O flag é o único canal de
 comando bandeja → daemon; não há socket nem porta aberta. As preferências de provedores

@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
-import { ClaudeCollector, ClaudeHttpError, findClaudeCode, isRevokedTokenBody, MIN_REFRESH_MS, MIN_RENEW_MS, parseClaudeUsage, parseRetryAfter } from '../collectors/claude';
+import { classifyRenewLog, ClaudeCollector, ClaudeHttpError, findClaudeCode, isRevokedTokenBody, MIN_REFRESH_MS, MIN_RENEW_MS, parseClaudeUsage, parseRetryAfter, renewClaudeSession, RenewReport } from '../collectors/claude';
 import { CodexCollector } from '../collectors/codex';
 import { createDiagnosticLogger } from '../diagnostics';
 import { RequestFactory, requestJson } from '../http';
@@ -110,6 +110,95 @@ export async function runRegressionTests(): Promise<number> {
       await collector.collect(true); assert.equal(renewals, 2);
     }
     assert.equal(requests, 0);
+  });
+
+  await check('log de depuração da renovação vira código fixo, sem confundir com linhas alheias ao refresh', () => {
+    const line = (text: string) => `2026-11-16T01:20:24.474Z [ERROR] ${text}`;
+    const caNoise = line('CA certs: Dropped the certificate with SHA-256 fingerprint 8B:13 and subject SELF_SIGNED_CERT_IN_CHAIN');
+    assert.equal(classifyRenewLog([caNoise, line('OAuth refresh failed (expected): Request failed with status code 400')].join('\r\n')), 'REFRESH_HTTP_400');
+    assert.equal(classifyRenewLog(line('OAuth token refresh failed: Request failed with status code 429')), 'REFRESH_HTTP_429');
+    assert.equal(classifyRenewLog(line('OAuth refresh lock contention: another process is holding the refresh lock')), 'REFRESH_LOCKED');
+    assert.equal(classifyRenewLog(line('Could not acquire refresh lock after 5 attempts')), 'REFRESH_LOCKED');
+    assert.equal(classifyRenewLog(line('Failed to acquire refresh lock: EPERM')), 'REFRESH_LOCK_ERROR');
+    assert.equal(classifyRenewLog(line('OAuth refresh failed: unable to verify, code SELF_SIGNED_CERT_IN_CHAIN')), 'REFRESH_TLS');
+    assert.equal(classifyRenewLog(line('OAuth refresh failed: connect ECONNRESET 160.79.104.10:443')), 'REFRESH_NETWORK');
+    assert.equal(classifyRenewLog(line('OAuth refresh token is no longer valid; run /login to re-authenticate')), 'REFRESH_REJECTED');
+    assert.equal(classifyRenewLog(line('OAuth refresh failed SYNTHETIC')), 'REFRESH_FAILED');
+    assert.equal(classifyRenewLog([line('Acquired refresh lock'), line('Released refresh lock')].join('\n')), 'REFRESH_ATTEMPTED');
+    // Erro de rede ou certificado de outra parte do CLI (MCP, flags) não é atribuído à renovação.
+    assert.equal(classifyRenewLog([caNoise, line('MCP server fetch failed: getaddrinfo ENOTFOUND example.invalid')].join('\n')), 'NO_REFRESH');
+    assert.equal(classifyRenewLog(''), 'NO_REFRESH');
+  });
+
+  await check('renovação passa o log de depuração a um arquivo temporário, classifica e apaga', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenbar-test-'));
+    try {
+      fs.writeFileSync(path.join(directory, 'auth-status-1-1.log'), 'SYNTHETIC_STALE');
+      fs.writeFileSync(path.join(directory, 'outro.txt'), 'mantido');
+      const calls: string[][] = [];
+      const result = await renewClaudeSession(undefined, { executable: 'C:\\SYNTHETIC\\claude.exe', directory,
+        execFile: (file, args, options, callback) => {
+          calls.push([file, ...args]);
+          assert.equal(options.windowsHide, true); assert.equal(options.timeout, 8_000);
+          assert.equal((options.env as NodeJS.ProcessEnv).DISABLE_AUTOUPDATER, '1');
+          const log = args[args.indexOf('--debug-file') + 1];
+          assert.equal(path.dirname(log), directory);
+          assert.deepEqual(fs.readdirSync(directory), ['outro.txt'], 'log antigo apagado antes da nova execução');
+          fs.writeFileSync(log, '2026-11-16T01:20:24Z [ERROR] OAuth refresh failed (expected): Request failed with status code 400\nPRIVATE_ACCOUNT_DATA\n');
+          setImmediate(() => callback(Object.assign(new Error('SYNTHETIC'), { code: 1 })));
+          return { stdin: null };
+        } });
+      assert.deepEqual(result, { code: 'REFRESH_HTTP_400', exitCode: 1, timedOut: undefined });
+      assert.deepEqual(calls[0].slice(-2), ['auth', 'status']); assert.equal(calls[0][0], 'C:\\SYNTHETIC\\claude.exe');
+      assert.deepEqual(fs.readdirSync(directory), ['outro.txt'], 'o log lido não fica no disco');
+
+      const timeout = await renewClaudeSession(undefined, { executable: 'C:\\SYNTHETIC\\claude.exe', directory,
+        execFile: (_file, _args, _options, callback) => { setImmediate(() => callback(Object.assign(new Error('SYNTHETIC'), { killed: true }))); return { stdin: null }; } });
+      assert.deepEqual(timeout, { code: 'TIMEOUT', exitCode: undefined, timedOut: true });
+      const crash = await renewClaudeSession(undefined, { executable: 'C:\\SYNTHETIC\\claude.exe', directory,
+        execFile: () => { throw new Error('SYNTHETIC'); } });
+      assert.equal(crash.code, 'SPAWN_ERROR');
+      assert.deepEqual(await renewClaudeSession(undefined, { executable: null, directory }), { code: 'NO_CLI' });
+      assert.deepEqual(fs.readdirSync(directory), ['outro.txt']);
+    } finally {
+      assert.equal(path.dirname(path.resolve(directory)), path.resolve(os.tmpdir()));
+      assert.ok(path.basename(directory).startsWith('tokenbar-test-'));
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  await check('cada renovação é relatada ao diagnóstico, e o arquivo é relido mesmo com o CLI terminando em erro', async () => {
+    const reports: RenewReport[] = [];
+    let fileRenewed = false;
+    const collector = new ClaudeCollector(fixture(), { now: () => NOW,
+      readCredentials: async () => ({ claudeAiOauth: fileRenewed
+        ? { accessToken: 'SYNTHETIC_RENEWED', expiresAt: NOW + 8 * 3600_000 } : { accessToken: 'SYNTHETIC_OLD', expiresAt: NOW - 1 } }),
+      renewSession: async () => { fileRenewed = true; return { code: 'REFRESH_ATTEMPTED', exitCode: 1 }; },
+      onRenew: report => { reports.push(report); throw new Error('SYNTHETIC: o relato não interrompe a coleta'); },
+      requestUsage: async () => usage });
+    assert.equal((await collector.collect(true)).status, 'ok');
+    assert.equal(reports.length, 1); assert.equal(reports[0].renewed, true); assert.equal(reports[0].code, 'REFRESH_ATTEMPTED');
+    assert.equal(reports[0].exitCode, 1); assert.ok(reports[0].durationMs >= 0);
+
+    const failed = new ClaudeCollector(fixture(), { now: () => NOW,
+      readCredentials: async () => ({ claudeAiOauth: { accessToken: 'SYNTHETIC_OLD', expiresAt: NOW - 1 } }),
+      renewSession: async () => ({ code: 'REFRESH_HTTP_400', exitCode: 0 }), onRenew: report => reports.push(report) });
+    assert.equal((await failed.collect(true)).failureCode, 'TOKEN_EXPIRED');
+    assert.deepEqual({ ...reports[1], durationMs: 0 }, { code: 'REFRESH_HTTP_400', exitCode: 0, renewed: false, durationMs: 0 });
+
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenbar-test-'));
+    try {
+      const manager = new UsageManager(undefined, { collectors: [], onDiagnostic: createDiagnosticLogger(directory) });
+      manager.reportRenew(reports[1]);
+      manager.reportRenew({ code: 'Bearer PRIVATE_SECRET', exitCode: 1.5, timedOut: true, renewed: false, durationMs: 8000 });
+      const lines = fs.readFileSync(path.join(directory, 'diagnostics.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      assert.deepEqual(lines.map(line => [line.event, line.provider, line.status, line.failureCode, line.exitCode, line.failureKind]), [
+        ['claude-renew', 'claude', 'unavailable', 'REFRESH_HTTP_400', 0, undefined],
+        ['claude-renew', 'claude', 'unavailable', undefined, undefined, 'timeout']]);
+    } finally {
+      assert.ok(path.basename(directory).startsWith('tokenbar-test-'));
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   await check('o executável do Claude Code é procurado sem shims nem shell', () => {

@@ -3,8 +3,10 @@ import * as path from 'path';
 import { FailureKind, ProviderId, ProviderSnapshot, safeFailureCode } from './usage';
 
 export interface DiagnosticEvent {
-  event: 'collection' | 'daemon-start' | 'publish-error' | 'listener-error' | 'unexpected-error' | 'cost' | 'cost-error';
+  event: 'collection' | 'daemon-start' | 'publish-error' | 'listener-error' | 'unexpected-error' | 'cost' | 'cost-error' | 'claude-renew';
   provider?: ProviderId;
+  /** Código de saída do `claude auth status` (só em `claude-renew`). */
+  exitCode?: number;
   status?: ProviderSnapshot['status'];
   failureKind?: FailureKind;
   failureCode?: string;
@@ -26,6 +28,7 @@ export function createDiagnosticLogger(directory: string, maxBytes = 256 * 1024)
         at: new Date().toISOString(), event: event.event, provider: event.provider,
         status: event.status, failureKind: event.failureKind, failureCode: safeFailureCode(event.failureCode),
         tlsTrust: event.tlsTrust === 'system' ? 'system' : undefined, durationMs: event.durationMs,
+        exitCode: typeof event.exitCode === 'number' && Number.isSafeInteger(event.exitCode) ? event.exitCode : undefined,
         collectedAt: event.collectedAt, lastAttemptAt: event.lastAttemptAt, nextRetryAt: event.nextRetryAt
       }) + '\n';
       if (fs.existsSync(current) && fs.statSync(current).size + Buffer.byteLength(line) > maxBytes) {

@@ -1,4 +1,4 @@
-import { ClaudeCollector, renewClaudeSession } from './collectors/claude';
+import { ClaudeCollector, renewClaudeSession, RenewReport } from './collectors/claude';
 import { CodexCollector } from './collectors/codex';
 import { AntigravityCollector } from './collectors/antigravity';
 import { DiagnosticEvent } from './diagnostics';
@@ -16,7 +16,8 @@ export class UsageManager {
     this.snapshot = restoreSnapshot(initialSnapshot) ?? { collectedAt: new Date(0).toISOString(), providers: [] };
     const cachedClaude = this.snapshot.providers.find(provider => provider.provider === 'claude');
     const cachedAntigravity = this.snapshot.providers.find(provider => provider.provider === 'antigravity');
-    this.collectors = options.collectors ?? [new ClaudeCollector(cachedClaude, { renewSession: renewClaudeSession }), new CodexCollector(), new AntigravityCollector(cachedAntigravity)];
+    this.collectors = options.collectors ?? [new ClaudeCollector(cachedClaude, { renewSession: renewClaudeSession, onRenew: report => this.reportRenew(report) }),
+      new CodexCollector(), new AntigravityCollector(cachedAntigravity)];
   }
 
   public getSnapshot(): UsageSnapshot { return this.snapshot; }
@@ -67,6 +68,12 @@ export class UsageManager {
     for (const listener of this.listeners) {
       try { listener(this.snapshot); } catch { this.diagnose({ event: 'listener-error', provider: collector.provider }); }
     }
+  }
+
+  /** Uma linha por renovação tentada (no máximo a cada 15 min): resultado, código e saída do CLI. */
+  public reportRenew(report: RenewReport): void {
+    this.diagnose({ event: 'claude-renew', provider: 'claude', status: report.renewed ? 'ok' : 'unavailable',
+      failureKind: report.timedOut ? 'timeout' : undefined, failureCode: report.code, exitCode: report.exitCode, durationMs: report.durationMs });
   }
 
   private diagnose(event: DiagnosticEvent): void {

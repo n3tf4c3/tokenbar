@@ -7,6 +7,16 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não publicado]
 
+### Diagnóstico da renovação do token do Claude
+
+- A renovação automática falhava sem deixar rastro: o daemon descartava o resultado do
+  `claude auth status`. Agora cada tentativa grava `event: "claude-renew"` no diagnóstico,
+  com o código de saída, a duração, se o token ficou válido e um código do motivo tirado do
+  log de depuração do CLI (`REFRESH_HTTP_400`, `REFRESH_LOCKED`, `REFRESH_NETWORK`,
+  `NO_REFRESH`…). O log vai para `%TEMP%\tokenbar-renew\` e é apagado logo após a leitura.
+- O arquivo de credenciais é relido mesmo quando o CLI termina com erro, para aproveitar
+  uma renovação que tenha dado certo assim mesmo.
+
 ### Estimativa de custo e painel mais compacto
 
 - O painel mostra, ao lado do Claude e do Codex, quanto o uso da assinatura custaria na API
