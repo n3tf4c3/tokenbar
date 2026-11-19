@@ -8,44 +8,123 @@ export const ANTIGRAVITY_REFRESH_MS = 60_000;
 const RATE_LIMIT_BACKOFF_MS = 5 * 60_000;
 const SOURCE = 'Antigravity CLI';
 
+// Os dois grupos originais mantêm IDs e rótulos curtos para não quebrar cache e bandeja.
+// Grupos novos (ex.: a cota própria do Gemini 4 Argon) recebem ID e rótulo derivados do nome.
 const GROUPS = new Map([
   ['Gemini Models', { id: 'gemini', label: 'Gemini', short: 'Gem' }],
   ['Claude and GPT models', { id: 'claude_gpt', label: 'Claude/GPT', short: 'C/G' }]
 ]);
-const PERIODS = new Map([
-  ['Five Hour Limit Remaining', { id: 'five_hour', label: '5 horas', short: '5h', minutes: 300 }],
-  ['Weekly Limit Remaining', { id: 'seven_day', label: 'Semanal', short: 'sem', minutes: 10_080 }]
-]);
+const PERIODS = {
+  five_hour: { label: '5 horas', short: '5h', minutes: 300 },
+  seven_day: { label: 'Semanal', short: 'sem', minutes: 10_080 }
+} as const;
+type PeriodId = keyof typeof PERIODS;
+const MAX_NAME_LENGTH = 60;
 
-/** O /usage oficial devolve TSV com percentual restante, não percentual usado. */
-export function parseAntigravityUsage(output: string): UsageWindow[] {
-  const windows: UsageWindow[] = [];
-  const seen = new Set<string>();
-  for (const line of output.trim().split(/\r?\n/).filter(line => line.trim())) {
+interface AntigravityBucket { group: string; period?: PeriodId; remainingPercent: number; resetsAt?: string }
+
+function invalidUsage(message = 'O Antigravity retornou um formato de cotas desconhecido.'): CollectionError {
+  return new CollectionError(message, 'invalid-response');
+}
+
+function groupInfo(name: string): { id: string; label: string; short: string } {
+  const known = GROUPS.get(name);
+  if (known) { return known; }
+  const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  if (!id || name.length > MAX_NAME_LENGTH || /[\u0000-\u001f\u007f]/.test(name)) { throw invalidUsage(); }
+  const words = name.split(/\s+/).filter(word => !/^(?:models?|and)$/i.test(word));
+  const label = words.join(' ') || name;
+  return { id, label, short: (words[words.length - 1] ?? name).slice(0, 6) };
+}
+
+/** Período pelo campo `window` do JSON ou pelo nome do bucket; períodos desconhecidos são ignorados. */
+function periodOf(window: unknown, name: string): PeriodId | undefined {
+  if (window === '5h' || (window === undefined && /\bfive[ -]?hour\b|\b5[ -]?h(?:our)?\b/i.test(name))) { return 'five_hour'; }
+  if (window === 'weekly' || (window === undefined && /\bweekly\b/i.test(name))) { return 'seven_day'; }
+  return undefined;
+}
+
+/** TSV do modo texto: grupo, nome do limite, percentual restante e renovação ISO. */
+function parseTsvBuckets(output: string): AntigravityBucket[] {
+  return output.trim().split(/\r?\n/).filter(line => line.trim()).map(line => {
     const fields = line.split('\t').map(field => field.trim());
-    // O Argon tem uma cota semanal própria, separada do grupo Gemini Models.
-    const argonWeekly = fields[0] === 'Gemini 4 Argon' && fields[1] === 'Gemini 4 Argon Weekly Limit';
-    const group = argonWeekly ? { id: 'gemini_4_argon', label: 'Gemini 4 Argon', short: 'Argon' } : GROUPS.get(fields[0]);
-    const period = PERIODS.get(argonWeekly ? 'Weekly Limit Remaining' : fields[1]);
-    if (fields.length !== 4 || !group || !period || !/^\d+(?:\.\d+)?%$/.test(fields[2])
-      || !/^\d{4}-\d{2}-\d{2}T/.test(fields[3])) {
-      throw new CollectionError('O Antigravity retornou um formato de cotas desconhecido.', 'invalid-response');
+    if (fields.length !== 4 || !fields[0] || !/^\d+(?:\.\d+)?%$/.test(fields[2]) || !/^\d{4}-\d{2}-\d{2}T/.test(fields[3])) {
+      throw invalidUsage();
     }
-    const remaining = Number(fields[2].slice(0, -1));
-    if (!Number.isFinite(remaining) || remaining > 100) {
-      throw new CollectionError('O Antigravity retornou um percentual inválido.', 'invalid-response');
+    return { group: fields[0], period: periodOf(undefined, fields[1]), remainingPercent: Number(fields[2].slice(0, -1)), resetsAt: fields[3] };
+  });
+}
+
+/** JSON de `--output-format json`: `command.data.groups[].buckets[]` com a fração restante exata. */
+function parseJsonBuckets(output: string): AntigravityBucket[] {
+  const line = output.trim().split(/\r?\n/).reverse().find(item => item.trim().startsWith('{'));
+  let payload: any;
+  try { payload = JSON.parse(line ?? ''); } catch { throw invalidUsage(); }
+  if (!payload || typeof payload !== 'object') { throw invalidUsage(); }
+  if (payload.finished_reason === 'print_timeout') {
+    throw new CollectionError('Tempo esgotado ao consultar as cotas do Antigravity.', 'timeout');
+  }
+  if (payload.status !== undefined && payload.status !== 'SUCCESS') { throw invalidUsage(); }
+  const groups = payload.command?.data?.groups;
+  if (!Array.isArray(groups)) {
+    // CLI que ainda não estrutura o comando: o TSV vem em `response`.
+    if (typeof payload.response === 'string') { return parseTsvBuckets(payload.response); }
+    throw invalidUsage();
+  }
+  // Em JSON o zero pode ser omitido; o TSV do mesmo payload serve de conferência.
+  const tsv = typeof payload.response === 'string' ? safeTsv(payload.response) : [];
+  const buckets: AntigravityBucket[] = [];
+  for (const group of groups) {
+    if (!group || typeof group.name !== 'string' || !Array.isArray(group.buckets)) { throw invalidUsage(); }
+    for (const bucket of group.buckets) {
+      if (!bucket || typeof bucket.name !== 'string') { throw invalidUsage(); }
+      if (bucket.disabled === true || bucket.enabled === false) { continue; }
+      const period = periodOf(bucket.window, bucket.name);
+      let fraction = bucket.remaining_fraction;
+      if (fraction === undefined || fraction === null) {
+        const text = tsv.find(item => item.group === group.name && item.name === bucket.name);
+        if (!text) { throw invalidUsage(); }
+        fraction = text.remainingPercent / 100;
+      }
+      if (typeof fraction !== 'number' || !Number.isFinite(fraction) || fraction < 0 || fraction > 1) {
+        throw invalidUsage('O Antigravity retornou um percentual inválido.');
+      }
+      buckets.push({ group: group.name, period, remainingPercent: fraction * 100, resetsAt: bucket.reset_time ?? undefined });
     }
-    const id = `antigravity_${group.id}_${period.id}`;
-    if (seen.has(id)) { throw new CollectionError('O Antigravity retornou uma janela de cota duplicada.', 'invalid-response'); }
-    seen.add(id);
+  }
+  return buckets;
+}
+
+function safeTsv(output: string): { group: string; name: string; remainingPercent: number }[] {
+  return output.trim().split(/\r?\n/).map(line => line.split('\t').map(field => field.trim()))
+    .filter(fields => fields.length === 4 && /^\d+(?:\.\d+)?%$/.test(fields[2]))
+    .map(fields => ({ group: fields[0], name: fields[1], remainingPercent: Number(fields[2].slice(0, -1)) }));
+}
+
+/** O /usage oficial informa percentual restante, não percentual usado. Aceita JSON ou o TSV antigo. */
+export function parseAntigravityUsage(output: string): UsageWindow[] {
+  // Um aviso do CLI antes do JSON não deve jogar a leitura para o TSV.
+  const buckets = /^\s*\{/m.test(output) ? parseJsonBuckets(output) : parseTsvBuckets(output);
+  const windows: (UsageWindow & { order: number })[] = [];
+  const groupOrder: string[] = [];
+  for (const bucket of buckets) {
+    if (bucket.remainingPercent > 100) { throw invalidUsage('O Antigravity retornou um percentual inválido.'); }
+    const group = groupInfo(bucket.group);
+    if (!bucket.period) { continue; }
+    const period = PERIODS[bucket.period];
+    const id = `antigravity_${group.id}_${bucket.period}`;
+    if (windows.some(window => window.id === id)) { throw invalidUsage('O Antigravity retornou uma janela de cota duplicada.'); }
+    if (!groupOrder.includes(group.id)) { groupOrder.push(group.id); }
     windows.push({
       id, label: `${group.label} · ${period.label}`, shortLabel: `${group.short} ${period.short}`,
-      usedPercent: clampPercent(Number((100 - remaining).toFixed(6))),
-      durationMinutes: period.minutes, resetsAt: parseReset(fields[3])
+      usedPercent: clampPercent(Number((100 - bucket.remainingPercent).toFixed(6))),
+      durationMinutes: period.minutes, resetsAt: parseReset(bucket.resetsAt),
+      // Grupos Gemini primeiro, depois a ordem do CLI; dentro do grupo, 5 h antes da semanal.
+      order: (group.id.startsWith('gemini') ? 0 : 1000) + groupOrder.indexOf(group.id)
     });
   }
-  return windows.sort((a, b) => (a.id.includes('_gemini_') ? 0 : 1) - (b.id.includes('_gemini_') ? 0 : 1)
-    || a.durationMinutes! - b.durationMinutes!);
+  return windows.sort((a, b) => a.order - b.order || a.durationMinutes! - b.durationMinutes!)
+    .map(({ order: _order, ...window }) => window);
 }
 
 class AntigravityCliError extends Error {
@@ -60,8 +139,11 @@ export function antigravityCliFailure(error: { code?: string | number | null; ki
   if (error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
     return new CollectionError('A resposta de cotas do Antigravity excedeu o limite de tamanho.', 'invalid-response');
   }
-  if (error.code === 'ABORT_ERR' || error.killed || /timed? out|timeout|deadline exceeded/i.test(output)) {
+  if (error.code === 'ABORT_ERR' || error.killed || /timed? out|timeout|deadline[ _]exceeded/i.test(output)) {
     return new CollectionError('Tempo esgotado ao consultar as cotas do Antigravity.', 'timeout');
+  }
+  if (error.code === 2 && /GEMINI_API_KEY|API key/i.test(output)) {
+    return new AntigravityCliError('Com GEMINI_API_KEY o Antigravity não tem cota de assinatura; entre com a conta Google no CLI.', 'unavailable');
   }
   if (/authentication required|unauthenticated|not (?:signed|logged) in|(?:sign|log)[ -]?in required|\b401\b/i.test(output)) {
     return new AntigravityCliError('Abra o Antigravity CLI e entre novamente na sua conta.', 'unavailable', 'auth');
@@ -90,7 +172,7 @@ function readUsage(signal?: AbortSignal): Promise<string> {
     const executable = findAntigravity();
     if (!executable) { reject(antigravityCliFailure({ code: 'ENOENT' }, '')); return; }
     // Executa apenas o comando interno de cotas; nenhum prompt ou token é enviado pelo TokenBar.
-    const child = execFile(executable, ['--print', '/usage', '--print-timeout', '10s'], {
+    const child = execFile(executable, ['--print', '/usage', '--print-timeout', '10s', '--output-format', 'json'], {
       cwd: os.tmpdir(), windowsHide: true, timeout: 12_000, maxBuffer: 64 * 1024, encoding: 'utf8', signal,
       // O auto-updater cria outros agy.exe que podem abrir um terminal no Windows.
       // A consulta não atualiza o CLI; a opção vale só para este processo e seus filhos.

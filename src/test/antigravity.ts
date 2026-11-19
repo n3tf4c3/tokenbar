@@ -15,6 +15,32 @@ const output = [
   'Claude and GPT models\tFive Hour Limit Remaining\t0%\t2026-09-06T08:00:00Z'
 ].join('\r\n');
 const argonOutput = 'Gemini 4 Argon\tGemini 4 Argon Weekly Limit\t77%\t2026-09-13T01:11:35Z';
+/** Formato de `agy --print /usage --output-format json` (1.5.x), com valores sintéticos. */
+function jsonOutput(): string {
+  const bucket = (id: string, name: string, window: string, remaining: number, reset: string) =>
+    ({ id, name, window, remaining_fraction: remaining, reset_time: reset });
+  return JSON.stringify({
+    conversation_id: '', status: 'SUCCESS',
+    response: [
+      'Gemini Models\tWeekly Limit Remaining\t25%\t2026-09-12T13:50:06Z',
+      'Gemini Models\tFive Hour Limit Remaining\t62%\t2026-09-06T08:00:00Z',
+      'Claude and GPT models\tWeekly Limit Remaining\t0%\t2026-09-13T03:00:00Z',
+      'Claude and GPT models\tFive Hour Limit Remaining\t100%\t2026-09-06T08:00:00Z',
+      'Gemini 4 Argon\tGemini 4 Argon Weekly Limit\t99%\t2026-09-13T01:11:35Z', ''
+    ].join('\n'),
+    duration_seconds: 0, num_turns: 0,
+    command: { name: 'usage', data: { description: 'synthetic', groups: [
+      { name: 'Gemini Models', description: 'synthetic', buckets: [
+        bucket('gemini-weekly', 'Weekly Limit Remaining', 'weekly', 0.25, '2026-09-12T13:50:06Z'),
+        bucket('gemini-5h', 'Five Hour Limit Remaining', '5h', 0.625, '2026-09-06T08:00:00Z')] },
+      { name: 'Claude and GPT models', description: 'synthetic', buckets: [
+        bucket('3p-weekly', 'Weekly Limit Remaining', 'weekly', 0, '2026-09-13T03:00:00Z'),
+        bucket('3p-5h', 'Five Hour Limit Remaining', '5h', 1, '2026-09-06T08:00:00Z')] },
+      { name: 'Gemini 4 Argon', description: 'synthetic', buckets: [
+        bucket('gemini-argon-wtu-weekly', 'Gemini 4 Argon Weekly Limit', 'weekly', 0.9898666739463806, '2026-09-13T01:11:35Z')] }
+    ] } }
+  });
+}
 
 export async function runAntigravityTests(): Promise<number> {
   let passed = 0;
@@ -39,10 +65,22 @@ export async function runAntigravityTests(): Promise<number> {
     for (const invalid of ['NaN%', '-1%', '101%', '', '10', 'Infinity%', 'true%', '1e2%']) {
       assert.throws(() => parseAntigravityUsage(valid.replace('25%', invalid)), CollectionError);
     }
-    for (const invalid of [valid.replace('2026-09-12T13:50:06Z', 'invalid'), valid.replace('Gemini Models', 'Unknown'),
-      valid.replace('Weekly Limit Remaining', 'Unknown'), `${valid}\tunexpected`, `${valid}\n${valid}`, 'Warning: auth failed']) {
+    for (const invalid of [valid.replace('2026-09-12T13:50:06Z', 'invalid'), valid.replace('Gemini Models', ''),
+      valid.replace('Gemini Models', 'x'.repeat(61)), `${valid}\tunexpected`, `${valid}\n${valid}`, 'Warning: auth failed']) {
       assert.throws(() => parseAntigravityUsage(invalid), CollectionError);
     }
+  });
+
+  await check('Antigravity aceita grupo novo e ignora período desconhecido sem derrubar as demais cotas', () => {
+    const neon = 'Gemini 4 Neon Models\tGemini 4 Neon Five Hour Limit\t40%\t2026-09-06T08:00:00Z';
+    const daily = 'Gemini Models\tDaily Limit Remaining\t10%\t2026-09-07T03:00:00Z';
+    const windows = parseAntigravityUsage(`${output}\n${neon}\n${daily}`);
+    assert.equal(windows.length, 5);
+    assert.deepEqual(windows.find(window => window.id === 'antigravity_gemini_4_neon_models_five_hour'), {
+      id: 'antigravity_gemini_4_neon_models_five_hour', label: 'Gemini 4 Neon · 5 horas', shortLabel: 'Neon 5h',
+      usedPercent: 60, durationMinutes: 300, resetsAt: '2026-09-06T08:00:00.000Z'
+    });
+    assert.deepEqual(windows.filter(window => !window.id.includes('neon')), parseAntigravityUsage(output));
   });
 
   await check('Antigravity preserva a cota semanal própria do Argon junto das cotas legadas', () => {
@@ -58,17 +96,71 @@ export async function runAntigravityTests(): Promise<number> {
     assert.equal(new Set(mixed.map(window => window.id)).size, 5);
   });
 
-  await check('Antigravity rejeita Argon malformado, duplicado ou com período incompatível', () => {
+  await check('Antigravity rejeita Argon malformado ou duplicado', () => {
     for (const invalid of [
       argonOutput.replace('77%', 'NaN%'), argonOutput.replace('77%', '101%'),
       argonOutput.replace('2026-09-13T01:11:35Z', 'invalid'),
-      argonOutput.replace('Gemini 4 Argon Weekly Limit', 'Weekly Limit Remaining'),
-      argonOutput.replace('Gemini 4 Argon Weekly Limit', 'Five Hour Limit Remaining'),
       argonOutput.replace('Gemini 4 Argon\t', 'Gemini Models\t'),
       `${argonOutput}\tunexpected`, `${argonOutput}\n${argonOutput}`
     ]) {
       assert.throws(() => parseAntigravityUsage(`${output}\n${invalid}`), CollectionError);
     }
+  });
+
+  await check('Antigravity lê o JSON estruturado com a fração exata e o tipo de janela', () => {
+    const windows = parseAntigravityUsage(`${jsonOutput()}\r\n`);
+    assert.deepEqual(windows.map(window => window.id), [
+      'antigravity_gemini_five_hour', 'antigravity_gemini_seven_day', 'antigravity_gemini_4_argon_seven_day',
+      'antigravity_claude_gpt_five_hour', 'antigravity_claude_gpt_seven_day'
+    ]);
+    assert.deepEqual(windows.map(window => window.usedPercent), [37.5, 75, 1.013333, 0, 100]);
+    assert.deepEqual(windows.map(window => window.shortLabel), ['Gem 5h', 'Gem sem', 'Argon sem', 'C/G 5h', 'C/G sem']);
+    assert.equal(windows[2].resetsAt, '2026-09-13T01:11:35.000Z');
+    // Aviso do CLI antes do JSON não muda a leitura.
+    assert.deepEqual(parseAntigravityUsage(`Warning: update available\r\n${jsonOutput()}`), windows);
+  });
+
+  await check('Antigravity em JSON ignora bucket desativado e completa fração omitida pelo TSV', () => {
+    const payload = JSON.parse(jsonOutput());
+    const gemini = payload.command.data.groups[0].buckets;
+    gemini[0].disabled = true;
+    delete payload.command.data.groups[1].buckets[0].remaining_fraction;
+    payload.command.data.groups.push({ name: 'Gemini 4 Neon', buckets: [
+      { id: 'neon-daily', name: 'Daily Limit', window: 'daily', remaining_fraction: 0.5, reset_time: '2026-09-07T03:00:00Z' },
+      { id: 'neon-5h', name: 'Five Hour Limit', window: '5h', remaining_fraction: 0.9, reset_time: '2026-09-06T08:00:00Z' }
+    ] });
+    const windows = parseAntigravityUsage(JSON.stringify(payload));
+    assert.equal(windows.some(window => window.id === 'antigravity_gemini_seven_day'), false);
+    assert.equal(windows.find(window => window.id === 'antigravity_claude_gpt_seven_day')?.usedPercent, 100);
+    assert.equal(windows.find(window => window.id === 'antigravity_gemini_4_neon_five_hour')?.shortLabel, 'Neon 5h');
+    assert.equal(windows.find(window => window.id === 'antigravity_gemini_4_neon_five_hour')?.usedPercent, 10);
+    assert.equal(windows.length, 5);
+  });
+
+  await check('Antigravity em JSON rejeita payload inválido e trata prazo esgotado como timeout', () => {
+    const variants: ((payload: any) => void)[] = [
+      payload => { payload.status = 'ERROR'; },
+      payload => { payload.command.data.groups[0].buckets[0].remaining_fraction = 1.5; },
+      payload => { payload.command.data.groups[0].buckets[0].remaining_fraction = -0.1; },
+      payload => { payload.command.data.groups[0].buckets[0].remaining_fraction = '0.5'; },
+      payload => { payload.command.data.groups[0].buckets[0].reset_time = 'invalid'; },
+      payload => { payload.command.data.groups[0].buckets.push({ ...payload.command.data.groups[0].buckets[0] }); },
+      payload => { delete payload.command.data.groups[0].buckets[0].remaining_fraction; payload.response = ''; },
+      payload => { payload.command.data.groups[0].name = 42; },
+      payload => { delete payload.command; payload.response = 'Warning: auth failed'; }
+    ];
+    for (const change of variants) {
+      const payload = JSON.parse(jsonOutput()); change(payload);
+      assert.throws(() => parseAntigravityUsage(JSON.stringify(payload)), (error: unknown) =>
+        error instanceof CollectionError && error.kind === 'invalid-response');
+    }
+    assert.throws(() => parseAntigravityUsage('{not json'), CollectionError);
+    const partial = JSON.parse(jsonOutput()); partial.status = 'ERROR'; partial.finished_reason = 'print_timeout';
+    assert.throws(() => parseAntigravityUsage(JSON.stringify(partial)), (error: unknown) =>
+      error instanceof CollectionError && error.kind === 'timeout');
+    // CLI sem `command.data`: o TSV de `response` continua valendo.
+    const legacy = JSON.parse(jsonOutput()); delete legacy.command;
+    assert.deepEqual(parseAntigravityUsage(JSON.stringify(legacy)).map(window => window.usedPercent), [38, 75, 1, 0, 100]);
   });
 
   await check('Coleta recupera cache antigo e publica Argon no snapshot e no dashboard', async () => {
@@ -108,7 +200,7 @@ export async function runAntigravityTests(): Promise<number> {
           process.exit(42);
         }
         if (process.env.TOKENBAR_TEST_ANTIGRAVITY !== 'preserved') process.exit(43);
-        require('assert/strict').deepEqual(process.argv.slice(2), ['--print', '/usage', '--print-timeout', '10s']);
+        require('assert/strict').deepEqual(process.argv.slice(2), ['--print', '/usage', '--print-timeout', '10s', '--output-format', 'json']);
         process.stdin.resume();
         process.stdin.on('end', () => process.stdout.write(${JSON.stringify(output)}));
       `);
@@ -155,7 +247,8 @@ export async function runAntigravityTests(): Promise<number> {
   await check('Antigravity sem CLI ou login fica indisponível e não expõe mensagens privadas', async () => {
     for (const [code, text, kind] of [
       ['ENOENT', 'PRIVATE_SECRET', undefined],
-      [1, 'authentication required PRIVATE_SECRET', 'auth']
+      [1, 'authentication required PRIVATE_SECRET', 'auth'],
+      [2, '/usage is not available with GEMINI_API_KEY PRIVATE_SECRET', undefined]
     ] as const) {
       const collector = new AntigravityCollector(undefined, { now: () => NOW, readUsage: async () => {
         throw antigravityCliFailure({ code }, text);

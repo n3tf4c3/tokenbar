@@ -7,6 +7,20 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não publicado]
 
+### Cotas do Antigravity pelo JSON do CLI
+
+- A consulta passa a usar `agy --print /usage --output-format json`, que traz a fração
+  restante exata (o texto arredondava, ex.: 99% em vez de 98,99%) e o tipo de janela
+  (`5h`/`weekly`) num campo próprio. O TSV continua aceito como reserva.
+- Grupo de cota novo deixa de derrubar a coleta inteira: até aqui qualquer combinação
+  desconhecida de grupo e período fazia o painel ficar no cache, como aconteceu com o
+  Gemini 4 Argon. Agora um grupo novo vira janela própria com rótulo curto tirado do nome,
+  e períodos desconhecidos ou buckets desativados são ignorados. IDs e rótulos das
+  janelas atuais (`Gem`, `C/G`, `Argon`) não mudam.
+- Resposta parcial por prazo esgotado (`finished_reason: "print_timeout"`) vira timeout,
+  e login por `GEMINI_API_KEY`, que não tem cota de assinatura, fica indisponível com
+  mensagem própria em vez de "falha de rede". Validado com o `agy` 1.5.11.
+
 ### Diagnóstico da renovação do token do Claude
 
 - A renovação automática falhava sem deixar rastro: o daemon descartava o resultado do

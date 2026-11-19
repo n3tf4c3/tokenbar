@@ -10,7 +10,7 @@ o snapshot que a bandeja lê.
    UsageManager (dedupe de refresh + eventos independentes)
    ├── ClaudeCollector      → HTTPS + OAuth → api.anthropic.com
    ├── CodexCollector       → processo filho → codex app-server --stdio
-   └── AntigravityCollector → processo filho → agy --print '/usage'
+   └── AntigravityCollector → processo filho → agy --print '/usage' --output-format json
 
    consumidor do UsageManager:
 
@@ -34,7 +34,7 @@ o snapshot que a bandeja lê.
 | `src/usageManager.ts` | Orquestra os coletores. Deduplica refreshes concorrentes, guarda o último snapshot e notifica listeners. |
 | `src/collectors/claude.ts` | Lê a sessão OAuth do Claude Code e consulta as janelas de cota. Cache, backoff e tradução de erros. |
 | `src/collectors/codex.ts` | Sobe o `codex app-server` e lê a cota principal e as janelas próprias do Spark na mesma consulta. |
-| `src/collectors/antigravity.ts` | Executa `/usage` no CLI oficial, valida TSV, converte restante em usado e preserva cache/esperas. |
+| `src/collectors/antigravity.ts` | Executa `/usage` no CLI oficial, valida o JSON (ou o TSV), converte restante em usado e preserva cache/esperas. |
 | `src/http.ts` | HTTP com prazo total, cancelamento, limite de tamanho, resposta incompleta e nova tentativa com as raízes da loja do Windows quando o emissor do certificado não é reconhecido. |
 | `src/cost.ts` | Estimativa do valor equivalente em API: lê os registros de sessão do Claude Code e do Codex de forma incremental, aplica a tabela de preços por modelo e devolve os totais de hoje e de 7 dias. |
 | `src/diagnostics.ts` | Log local com campos permitidos e rotação de dois arquivos de 256 KiB. |
@@ -228,7 +228,8 @@ Contas sem janelas do Spark continuam mostrando apenas as cotas existentes, sem 
 
 ## Coletor Antigravity: comando de cotas
 
-Executa o binário nativo `agy` com argumentos fixos `--print /usage --print-timeout 10s`,
+Executa o binário nativo `agy` com argumentos fixos
+`--print /usage --print-timeout 10s --output-format json`,
 via `execFile`, sem shell, no diretório temporário do sistema e com janela oculta. Procura
 na instalação padrão do usuário e no PATH. O CLI gerencia a própria autenticação.
 
@@ -239,39 +240,57 @@ esses descendentes podiam abrir uma janela do Terminal apesar de `windowsHide` n
 processo inicial. A opção é passada em uma cópia de `process.env`: não altera o ambiente
 do daemon, as configurações do sistema ou as atualizações do CLI executado pelo usuário.
 
-O parser aceita linhas TSV com quatro campos: grupo, período, percentual restante e
-renovação ISO. Os grupos conhecidos são `Gemini Models` e `Claude and GPT models`; os
-períodos são `Five Hour Limit Remaining` e `Weekly Limit Remaining`. Grupos parciais são
-aceitos, mas campos inválidos, janelas duplicadas e formatos desconhecidos falham sem
-inventar cotas. O percentual restante é convertido uma única vez para usado.
+O JSON traz cada grupo de modelos com seus buckets em `command.data.groups[].buckets[]`:
+`window` (`5h` ou `weekly`), `remaining_fraction` (0 a 1, sem o arredondamento do texto) e
+`reset_time` em UTC. O mesmo payload repete o TSV do modo texto em `response` (grupo, nome
+do limite, percentual restante, renovação). O parser usa os buckets; recorre ao TSV quando
+o payload não traz `command.data` ou quando um bucket omite a fração. Sem JSON na saída,
+lê o TSV diretamente.
 
-O formato também inclui a cota própria `Gemini 4 Argon` / `Gemini 4 Argon Weekly Limit`.
-Ela vira uma janela semanal independente (`antigravity_gemini_4_argon_seven_day`,
-`Argon sem` na bandeja), com percentual e renovação próprios, sem somar nem substituir
-as janelas do grupo `Gemini Models`.
+- **Grupos.** `Gemini Models` e `Claude and GPT models` mantêm os IDs `gemini` e
+  `claude_gpt` (`Gem` e `C/G` na bandeja). Qualquer outro grupo recebe ID derivado do nome
+  e, como rótulo curto, a última palavra que não seja "models"/"and": a cota própria do
+  `Gemini 4 Argon` vira `antigravity_gemini_4_argon_seven_day` (`Argon sem`), e um grupo
+  novo que o CLI passe a listar aparece sem mudar o código.
+- **Períodos.** `5h` e `weekly` (ou, no TSV, "Five Hour"/"Weekly" no nome) viram 5 horas e
+  semanal. Período desconhecido e bucket marcado como desativado são ignorados, sem
+  derrubar as demais janelas. Os grupos Gemini vêm primeiro; dentro do grupo, 5 h antes
+  da semanal.
+- **Validação.** Fração fora de 0 a 1, data inválida, nome de grupo vazio ou longo demais,
+  janela duplicada, `status` diferente de `SUCCESS` e payload ilegível falham como
+  `invalid-response` sem inventar cotas; `finished_reason: "print_timeout"` vira
+  `timeout`. O percentual restante é convertido uma única vez para usado.
 
-Os IDs distinguem grupo e período (`antigravity_gemini_five_hour`, por exemplo).
-`label` identifica ambos pelo nome completo; `shortLabel` permite `Gem 5h`, `Gem sem`, `C/G 5h`
-e `C/G sem` na bandeja, mantendo sua largura. Essas cotas não são somadas às de Claude/Codex.
+`label` identifica grupo e período pelo nome completo; `shortLabel` mantém a largura da
+bandeja. Essas cotas não são somadas às de Claude/Codex.
 
 O processo tem timeout externo de 12 s, sinal de cancelamento e limite de saída de 64 KiB.
-Falhas viram mensagens locais, nunca stdout/stderr brutos. CLI ausente ou autenticação
-necessária ficam `unavailable`. Há piso de 60 s entre tentativas e espera de 5 min após
+Falhas viram mensagens locais, nunca stdout/stderr brutos. CLI ausente, autenticação
+necessária ou login por `GEMINI_API_KEY` (sem cota de assinatura; o CLI sai com código 2
+desde a 1.5.11) ficam `unavailable`. Há piso de 60 s entre tentativas e espera de 5 min após
 limitação de consultas, inclusive no refresh manual e após reinício. Falhas preservam as
 últimas janelas e seu `collectedAt`.
 
 Usa o comando público de [cotas](https://antigravity.google/docs/cli/commands/usage/)
 em [modo não interativo](https://antigravity.google/docs/cli/headless/), sem prompts de
-geração, proxy ou endpoint privado. Validado localmente com `agy 1.1.27`.
+geração, proxy ou endpoint privado. Validado localmente com `agy 1.1.27` (TSV) e
+`agy 1.5.11` (JSON).
 
 Para conferir a leitura fora do TokenBar, execute no terminal:
 
 ```powershell
 agy --print '/usage' --print-timeout 10s
+agy --print '/usage' --print-timeout 10s --output-format json
 ```
 
+No Git Bash, prefixe com `MSYS_NO_PATHCONV=1`: sem isso o MSYS converte `/usage` num
+caminho do Windows e o CLI trata o texto como prompt, gastando cota do modelo.
+
 O CLI informa a cota **disponível**; o TokenBar mostra a cota **usada**. Portanto, `100%`
-no relatório do CLI corresponde a `0%` na barra. Se o comando não retornar cotas, confira
+no relatório do CLI corresponde a `0%` na barra. Janela que ainda não começou a ser usada
+aparece com renovação a 5 h (ou 7 dias) a partir do momento da consulta.
+
+Se o comando não retornar cotas, confira
 a instalação e o login no CLI oficial. Não copie credenciais para o TokenBar.
 
 ## Estimativa de custo
