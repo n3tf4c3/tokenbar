@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { clampPercent, CollectionError, FailureKind, parseReset, ProviderSnapshot, unavailable, UsageCollector, UsageWindow } from '../usage';
 
-export const ANTIGRAVITY_REFRESH_MS = 60_000;
+export const ANTIGRAVITY_REFRESH_MS = 55_000;
 const RATE_LIMIT_BACKOFF_MS = 5 * 60_000;
 const SOURCE = 'Antigravity CLI';
 
@@ -172,8 +172,8 @@ function readUsage(signal?: AbortSignal): Promise<string> {
     const executable = findAntigravity();
     if (!executable) { reject(antigravityCliFailure({ code: 'ENOENT' }, '')); return; }
     // Executa apenas o comando interno de cotas; nenhum prompt ou token é enviado pelo TokenBar.
-    const child = execFile(executable, ['--print', '/usage', '--print-timeout', '10s', '--output-format', 'json'], {
-      cwd: os.tmpdir(), windowsHide: true, timeout: 12_000, maxBuffer: 64 * 1024, encoding: 'utf8', signal,
+    const child = execFile(executable, ['--print', '/usage', '--print-timeout', '15s', '--output-format', 'json'], {
+      cwd: os.tmpdir(), windowsHide: true, timeout: 18_000, maxBuffer: 64 * 1024, encoding: 'utf8', signal,
       // O auto-updater cria outros agy.exe que podem abrir um terminal no Windows.
       // A consulta não atualiza o CLI; a opção vale só para este processo e seus filhos.
       env: { ...process.env, AGY_CLI_DISABLE_AUTO_UPDATE: 'true' }

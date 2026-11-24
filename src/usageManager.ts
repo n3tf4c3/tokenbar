@@ -45,7 +45,7 @@ export class UsageManager {
         timer = setTimeout(() => {
           reject(new CollectionError('Tempo esgotado. Uma nova tentativa será feita automaticamente.', 'timeout'));
           controller.abort();
-        }, this.options.timeoutMs ?? 15_000);
+        }, this.options.timeoutMs ?? 20_000);
         Promise.resolve().then(() => collector.collect(force, controller.signal)).then(resolve, reject);
       });
     } catch (error) {

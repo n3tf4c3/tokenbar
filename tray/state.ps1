@@ -1,4 +1,4 @@
-# Funcoes de estado sem GUI, compartilhadas pela bandeja e pelos testes Windows.
+﻿# Funcoes de estado sem GUI, compartilhadas pela bandeja e pelos testes Windows.
 
 $script:DisabledProviders = @()
 $script:DaemonFailures = 0
@@ -153,6 +153,22 @@ function Get-WindowShortLabel {
   return '-'
 }
 
+function Get-WindowDisplayLabel {
+  param($Window)
+  $dot = [string] [char] 0x00B7
+  if ($Window.label) {
+    $label = [string] $Window.label
+    if ($label.Contains($dot)) {
+      if ($label.StartsWith('Janela de ')) { return $label.Substring(10) }
+      if ($label.StartsWith('Janela semanal ')) { return 'Semanal ' + $label.Substring(15) }
+    }
+    return $label
+  }
+  if ($Window.id -eq 'five_hour') { return 'Janela de 5 horas' }
+  if ($Window.id -eq 'seven_day') { return 'Janela semanal' }
+  return Get-WindowShortLabel $Window
+}
+
 # -Short e a forma do painel ("1d 18h"); sem ele, a forma por extenso do texto acessivel.
 function Get-Countdown {
   param([string] $ResetsAt, [DateTimeOffset] $Now = [DateTimeOffset]::UtcNow, [switch] $Short)
@@ -164,6 +180,29 @@ function Get-Countdown {
   if ($span.TotalDays -ge 1) { return ('{0}{1}d {2}h' -f $prefix, $span.Days, $span.Hours) }
   if ($span.TotalHours -ge 1) { return ('{0}{1}h {2}m' -f $prefix, $span.Hours, $span.Minutes) }
   return ('{0}{1}m' -f $prefix, [math]::Max(1, [math]::Floor($span.TotalMinutes)))
+}
+
+# Horario exato da renovacao no painel ("Renova as 15:20", "Renova dom 14:00").
+function Format-ResetTime {
+  param(
+    [string] $ResetsAt,
+    [DateTimeOffset] $Now = [DateTimeOffset]::UtcNow,
+    [TimeZoneInfo] $TimeZone = [TimeZoneInfo]::Local
+  )
+  $target = ConvertTo-UsageTimestamp $ResetsAt
+  if (-not $target) { return '' }
+  $span = $target - $Now
+  if ($span.TotalSeconds -le 0) { return 'Renovando' }
+  $localTarget = [TimeZoneInfo]::ConvertTime($target, $TimeZone)
+  $time = $localTarget.ToString('HH:mm')
+  if ($span.TotalHours -lt 24) {
+    return ('Renova {0}s {1}' -f [char] 0x00E0, $time)
+  }
+  if ($span.TotalDays -lt 7) {
+    $weekdays = @('dom', 'seg', 'ter', 'qua', 'qui', 'sex', ('s' + [char] 0x00E1 + 'b'))
+    return ('Renova {0} {1}' -f $weekdays[[int] $localTarget.DayOfWeek], $time)
+  }
+  return ('Renova {0} {1}' -f $localTarget.ToString('dd/MM'), $time)
 }
 
 # Estimativa de valor equivalente em API publicada pelo daemon (snapshot.costs). Nao e cobranca.

@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\..\tray\state.ps1')
 $now = [DateTimeOffset]'2026-09-05T13:00:00Z'
 $passed = 0
@@ -29,7 +29,23 @@ Assert-Equal (Get-Countdown '2026-09-07T07:00:00Z' $now -Short) '1d 18h' 'Panel 
 Assert-Equal (Get-Countdown '2026-09-05T13:00:20Z' $now -Short) '1m' 'Short countdown never shows zero'
 Assert-Equal (Get-Countdown '2026-09-05T12:00:00Z' $now -Short) 'renov.' 'Short countdown abbreviates an expired window'
 
+$utc = [TimeZoneInfo]::Utc
+$agrave = [char] 0x00E0; $aacute = [char] 0x00E1
+Assert-Equal (Format-ResetTime '2026-09-05T14:45:00Z' $now $utc) "Renova ${agrave}s 14:45" 'Reset within 24h shows exact time'
+Assert-Equal (Format-ResetTime '2026-09-06T02:30:00Z' $now $utc) "Renova ${agrave}s 02:30" 'Reset crossing midnight within 24h stays compact'
+Assert-Equal (Format-ResetTime '2026-09-07T07:00:00Z' $now $utc) 'Renova seg 07:00' 'Weekly reset shows weekday abbreviation and time'
+Assert-Equal (Format-ResetTime '2026-09-12T10:15:00Z' $now $utc) "Renova s${aacute}b 10:15" 'Saturday abbreviation keeps accent safely in PS 5.1'
+Assert-Equal (Format-ResetTime '2026-09-15T09:00:00Z' $now $utc) 'Renova 15/09 09:00' 'Reset a week or more away shows date and time'
+Assert-Equal (Format-ResetTime '2026-09-05T12:00:00Z' $now $utc) 'Renovando' 'Expired reset time shows Renovando'
+Assert-Equal (Format-ResetTime 'invalid' $now $utc) '' 'Invalid reset time returns empty'
+
 $dot = [char] 0x00B7; $approx = [char] 0x2248
+Assert-Equal (Get-WindowDisplayLabel ([pscustomobject]@{id='five_hour';label='Janela de 5 horas'})) 'Janela de 5 horas' 'Display label preserves standard 5-hour label'
+Assert-Equal (Get-WindowDisplayLabel ([pscustomobject]@{id='codex_bengalfox_primary';label="Janela de 5 horas $dot Spark"})) "5 horas $dot Spark" 'Display label trims redundant prefix for scoped 5-hour window'
+Assert-Equal (Get-WindowDisplayLabel ([pscustomobject]@{id='codex_bengalfox_secondary';label="Janela semanal $dot Spark"})) "Semanal $dot Spark" 'Display label trims redundant prefix for scoped weekly window'
+Assert-Equal (Get-WindowDisplayLabel ([pscustomobject]@{id='weekly_Fable';label="Semanal $dot Fable"})) "Semanal $dot Fable" 'Display label keeps model weekly label'
+Assert-Equal (Get-WindowDisplayLabel ([pscustomobject]@{id='five_hour'})) 'Janela de 5 horas' 'Display label falls back cleanly for legacy 5h cache'
+Assert-Equal (Get-WindowDisplayLabel ([pscustomobject]@{id='seven_day'})) 'Janela semanal' 'Display label falls back cleanly for legacy weekly cache'
 $script:Snapshot = [pscustomobject]@{providers=@(); costs=@(
   [pscustomobject]@{provider='claude';todayUsd=6.86;weekUsd=947.94;computedAt=$now.ToString('o')},
   [pscustomobject]@{provider='codex';todayUsd=0;weekUsd=1056.53;partial=$true;computedAt=$now.ToString('o')})}
@@ -254,6 +270,13 @@ $a11yClaude | Add-Member -NotePropertyName failureCode -NotePropertyValue 'SELF_
 Assert-Equal ((Get-PanelAccessibleText $now) -like 'Claude (dados em cache, falha: certificado): 5h, 93% usado*') $true 'Accessible panel text names the failure reason'
 $drawsFailure = (Get-TrayFunction 'Write-Panel').Find({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Get-FailureLabel' }, $true)
 Assert-Equal ($null -ne $drawsFailure) $true 'Write-Panel draws the failure reason in the provider header'
+# Provedor com exatamente 1 janela (ex.: Codex prolite): ConvertFrom-Json + if no PS 5.1 nao pode perder .Count.
+. ([scriptblock]::Create((Get-TrayFunction 'Get-ProviderCardHeight').Extent.Text))
+$script:Layout = @{ CardPadTop = 10; ProviderH = 24; RowH = 27; RowGap = 11; EmptyRowH = 18; CardPadBot = 12 }
+$singleWindowJson = '{"provider":"codex","label":"Codex","status":"ok","windows":[{"id":"codex_primary","label":"Janela semanal","usedPercent":3}]}' | ConvertFrom-Json
+$emptyWindowJson = '{"provider":"codex","label":"Codex","status":"ok","windows":[]}' | ConvertFrom-Json
+Assert-Equal (Get-ProviderCardHeight $singleWindowJson) (10 + 24 + 27 + 12) 'Single-window provider keeps row height instead of collapsing to empty state in PS 5.1'
+Assert-Equal (Get-ProviderCardHeight $emptyWindowJson) (10 + 24 + 18 + 12) 'Empty-window provider uses empty row height'
 Set-DisabledProviders @('claude', 'antigravity')
 Assert-Equal (Get-PanelAccessibleText $now) 'Codex (plano plus): Janela de 5 horas, 40% usado, renova em 1h 45m; sem, 92% usado, renova em 1d 18h.' 'Accessible panel text follows the provider selection'
 Set-DisabledProviders @('claude', 'codex', 'antigravity')

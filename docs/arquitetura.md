@@ -229,7 +229,7 @@ Contas sem janelas do Spark continuam mostrando apenas as cotas existentes, sem 
 ## Coletor Antigravity: comando de cotas
 
 Executa o binário nativo `agy` com argumentos fixos
-`--print /usage --print-timeout 10s --output-format json`,
+`--print /usage --print-timeout 15s --output-format json`,
 via `execFile`, sem shell, no diretório temporário do sistema e com janela oculta. Procura
 na instalação padrão do usuário e no PATH. O CLI gerencia a própria autenticação.
 

@@ -200,7 +200,7 @@ export async function runAntigravityTests(): Promise<number> {
           process.exit(42);
         }
         if (process.env.TOKENBAR_TEST_ANTIGRAVITY !== 'preserved') process.exit(43);
-        require('assert/strict').deepEqual(process.argv.slice(2), ['--print', '/usage', '--print-timeout', '10s', '--output-format', 'json']);
+        require('assert/strict').deepEqual(process.argv.slice(2), ['--print', '/usage', '--print-timeout', '15s', '--output-format', 'json']);
         process.stdin.resume();
         process.stdin.on('end', () => process.stdout.write(${JSON.stringify(output)}));
       `);

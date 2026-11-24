@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
   TokenBar - indicador de cota das assinaturas Claude, Codex e Antigravity no Windows.
   Le o snapshot publicado por dist/daemon.js e desenha o painel; nao consulta os servicos.
@@ -31,7 +31,8 @@ $script:ConfigPath = Join-Path $script:StateDir 'tray-config.json'
 $script:LogPath = Join-Path $script:StateDir 'tray.log'
 $script:LastTickError = $null
 # Atalho de versões anteriores, só para migração: ver Sync-StartupRegistration.
-$script:StartupLink = Join-Path ([Environment]::GetFolderPath('Startup')) 'TokenBar.lnk'
+$startupDir = [Environment]::GetFolderPath('Startup')
+$script:StartupLink = if ($startupDir) { Join-Path $startupDir 'TokenBar.lnk' } else { $null }
 $script:StartupTaskName = 'TokenBar'
 $script:TrayScript = $PSCommandPath
 $script:Snapshot = $null
@@ -47,42 +48,52 @@ if ($PSBoundParameters.ContainsKey('DisabledProviders')) {
 }
 
 $script:Colors = @{
-  Background = [System.Drawing.Color]::FromArgb(17, 21, 29)
-  Border     = [System.Drawing.Color]::FromArgb(35, 42, 54)
-  Track      = [System.Drawing.Color]::FromArgb(36, 42, 53)
-  Text       = [System.Drawing.Color]::FromArgb(238, 242, 247)
-  Muted      = [System.Drawing.Color]::FromArgb(140, 151, 168)
-  Green      = [System.Drawing.Color]::FromArgb(93, 225, 162)
-  Amber      = [System.Drawing.Color]::FromArgb(255, 189, 102)
-  Red        = [System.Drawing.Color]::FromArgb(255, 107, 120)
-  IconInk    = [System.Drawing.Color]::FromArgb(11, 14, 19)
+  Background  = [System.Drawing.Color]::FromArgb(26, 26, 26)
+  Border      = [System.Drawing.Color]::FromArgb(52, 52, 52)
+  Card        = [System.Drawing.Color]::FromArgb(38, 38, 38)
+  CardBorder  = [System.Drawing.Color]::FromArgb(56, 56, 56)
+  Track       = [System.Drawing.Color]::FromArgb(68, 68, 68)
+  Text        = [System.Drawing.Color]::FromArgb(238, 238, 238)
+  ValueText   = [System.Drawing.Color]::FromArgb(186, 186, 186)
+  Muted       = [System.Drawing.Color]::FromArgb(150, 150, 150)
+  SubtleMuted = [System.Drawing.Color]::FromArgb(112, 112, 112)
+  Blue        = [System.Drawing.Color]::FromArgb(46, 134, 245)
+  Red         = [System.Drawing.Color]::FromArgb(232, 75, 85)
+  IconMuted   = [System.Drawing.Color]::FromArgb(90, 90, 90)
+  IconInk     = [System.Drawing.Color]::FromArgb(255, 255, 255)
 }
 
 $script:Fonts = @{
-  Title    = New-Object System.Drawing.Font('Segoe UI', 10.5, [System.Drawing.FontStyle]::Bold)
-  Provider = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
-  Value    = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
-  Body     = New-Object System.Drawing.Font('Segoe UI', 8.5, [System.Drawing.FontStyle]::Regular)
+  Title    = New-Object System.Drawing.Font('Segoe UI', 9.5, [System.Drawing.FontStyle]::Bold)
+  Provider = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+  Label    = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Regular)
+  Value    = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Regular)
+  Meta     = New-Object System.Drawing.Font('Segoe UI', 8.5, [System.Drawing.FontStyle]::Regular)
   Small    = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Regular)
 }
 
 $script:Layout = @{
-  Width       = 300
+  Width       = 352
   Pad         = 10
   HeaderH     = 22
-  ProviderH   = 20
-  RowH        = 18
-  ProviderGap = 6
-  LabelW      = 60
-  BarW        = 84
-  ValueW      = 38
+  CardPadX    = 12
+  CardPadTop  = 10
+  CardPadBot  = 12
+  CardGap     = 8
+  CardRadius  = 8
+  ProviderH   = 24
+  RowH        = 27
+  RowGap      = 11
+  EmptyRowH   = 18
+  BarH        = 6
+  BarOffsetY  = 21
+  ValueW      = 32
 }
 
 function Get-Tone {
   param([double] $UsedPercent)
   if ($UsedPercent -ge 90) { return $script:Colors.Red }
-  if ($UsedPercent -ge 70) { return $script:Colors.Amber }
-  return $script:Colors.Green
+  return $script:Colors.Blue
 }
 
 
@@ -104,13 +115,23 @@ function Get-RoundedPath {
 }
 
 
+function Get-ProviderCardHeight {
+  param($Provider)
+  $windows = @(if ($Provider.windows) { $Provider.windows })
+  if (-not $windows.Count) {
+    return $script:Layout.CardPadTop + $script:Layout.ProviderH + $script:Layout.EmptyRowH + $script:Layout.CardPadBot
+  }
+  $rows = $windows.Count
+  return $script:Layout.CardPadTop + $script:Layout.ProviderH + ($rows * $script:Layout.RowH) + (($rows - 1) * $script:Layout.RowGap) + $script:Layout.CardPadBot
+}
+
 function Get-PanelHeight {
   $providers = @(Get-VisibleProviders)
   $height = $script:Layout.Pad + $script:Layout.HeaderH + $script:Layout.Pad
-  if (-not $providers.Count) { return $height + $script:Layout.RowH }
-  foreach ($provider in $providers) {
-    $rows = [math]::Max(1, @($provider.windows).Count)
-    $height += $script:Layout.ProviderH + ($rows * $script:Layout.RowH) + $script:Layout.ProviderGap
+  if (-not $providers.Count) { return $height + $script:Layout.EmptyRowH + 4 }
+  for ($i = 0; $i -lt $providers.Count; $i++) {
+    $height += Get-ProviderCardHeight $providers[$i]
+    if ($i -lt ($providers.Count - 1)) { $height += $script:Layout.CardGap }
   }
   return $height
 }
@@ -120,20 +141,34 @@ function Write-Panel {
   param([System.Drawing.Graphics] $Graphics, [int] $Width, [int] $Height)
 
   $Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+  $Graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
   $Graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
   $Graphics.Clear($script:Colors.Background)
 
   $textBrush = New-Object System.Drawing.SolidBrush $script:Colors.Text
+  $valueBrush = New-Object System.Drawing.SolidBrush $script:Colors.ValueText
   $mutedBrush = New-Object System.Drawing.SolidBrush $script:Colors.Muted
+  $subtleBrush = New-Object System.Drawing.SolidBrush $script:Colors.SubtleMuted
+  $cardBrush = New-Object System.Drawing.SolidBrush $script:Colors.Card
   $trackBrush = New-Object System.Drawing.SolidBrush $script:Colors.Track
   $borderPen = New-Object System.Drawing.Pen $script:Colors.Border
+  $cardPen = New-Object System.Drawing.Pen $script:Colors.CardBorder
+
+  $leftFmt = [System.Drawing.StringFormat]::GenericTypographic.Clone()
+  $leftFmt.FormatFlags = [System.Drawing.StringFormatFlags]::NoWrap
+  $leftFmt.Trimming = [System.Drawing.StringTrimming]::EllipsisCharacter
+
+  $rightFmt = [System.Drawing.StringFormat]::GenericTypographic.Clone()
+  $rightFmt.FormatFlags = [System.Drawing.StringFormatFlags]::NoWrap
+  $rightFmt.Alignment = [System.Drawing.StringAlignment]::Far
 
   $Graphics.DrawRectangle($borderPen, 0, 0, $Width - 1, $Height - 1)
 
   $pad = $script:Layout.Pad
   $y = $pad
+  $dot = ' ' + [char] 0x00B7 + ' '
 
-  $Graphics.DrawString('Cotas', $script:Fonts.Title, $textBrush, [float] $pad, [float] $y)
+  $Graphics.DrawString('Cotas', $script:Fonts.Title, $textBrush, [float] $pad, [float] $y, $leftFmt)
   $stampText = 'sem dados'
   if ($script:Snapshot) {
     $collected = Get-Date
@@ -141,8 +176,8 @@ function Write-Panel {
       $stampText = $collected.ToLocalTime().ToString('HH:mm')
     }
   }
-  $stampSize = $Graphics.MeasureString($stampText, $script:Fonts.Small)
-  $Graphics.DrawString($stampText, $script:Fonts.Small, $mutedBrush, [float] ($Width - $pad - $stampSize.Width), [float] ($y + 3))
+  $stampRect = New-Object System.Drawing.RectangleF([float] $pad, [float] ($y + 2), [float] ($Width - 2 * $pad), 16)
+  $Graphics.DrawString($stampText, $script:Fonts.Small, $mutedBrush, $stampRect, $rightFmt)
   $y += $script:Layout.HeaderH
 
   $providers = @(Get-VisibleProviders)
@@ -152,87 +187,135 @@ function Write-Panel {
     } else {
       'Sem dados.'
     }
-    $Graphics.DrawString($noDataMsg, $script:Fonts.Body, $mutedBrush, [float] $pad, [float] $y)
+    $Graphics.DrawString($noDataMsg, $script:Fonts.Label, $mutedBrush, [float] $pad, [float] ($y + 2), $leftFmt)
   }
 
-  foreach ($provider in $providers) {
-    $Graphics.DrawString([string] $provider.label, $script:Fonts.Provider, $textBrush, [float] $pad, [float] $y)
-    $nameWidth = $Graphics.MeasureString([string] $provider.label, $script:Fonts.Provider).Width
-    $tag = [string] $provider.plan
-    if ($provider.stale -or (Test-ProviderOutdated $provider)) {
-      if ($tag) { $tag += ' ' + [char] 0x00B7 + ' cache' } else { $tag = 'cache' }
-    }
-    $failure = Get-FailureLabel $provider
-    if ($failure) {
-      if ($tag) { $tag += ' ' + [char] 0x00B7 + ' ' + $failure } else { $tag = $failure }
-    }
-    $tagX = $Width - $pad
-    if ($tag) {
-      $tagSize = $Graphics.MeasureString($tag, $script:Fonts.Small)
-      $tagX = $Width - $pad - $tagSize.Width
-      $Graphics.DrawString($tag, $script:Fonts.Small, $mutedBrush, [float] $tagX, [float] ($y + 3))
-    }
-    # Custo estimado ao lado do nome; se nao couber antes da etiqueta, fica so o valor do dia.
-    $costText = Get-CostText $provider
-    if ($costText) {
-      $costX = $pad + $nameWidth + 2
-      if ($costX + $Graphics.MeasureString($costText, $script:Fonts.Small).Width -gt $tagX - 6) {
-        $costText = ($costText -split (' ' + [char] 0x00B7 + ' '))[0]
-      }
-      if ($costX + $Graphics.MeasureString($costText, $script:Fonts.Small).Width -le $tagX - 6) {
-        $Graphics.DrawString($costText, $script:Fonts.Small, $mutedBrush, [float] $costX, [float] ($y + 3))
-      }
-    }
-    $y += $script:Layout.ProviderH
+  $cardX = [float] $pad
+  $cardW = [float] ($Width - 2 * $pad)
+  $innerX = $cardX + $script:Layout.CardPadX
+  $innerW = $cardW - (2 * $script:Layout.CardPadX)
+  $innerRight = $innerX + $innerW
+  $barH = [float] $script:Layout.BarH
+  $barRadius = [float] ($barH / 2)
 
-    if (-not $provider.windows) {
-      $Graphics.DrawString('Sem dados.', $script:Fonts.Small, $mutedBrush, [float] $pad, [float] ($y + 2))
-      $y += $script:Layout.RowH + $script:Layout.ProviderGap
+  for ($p = 0; $p -lt $providers.Count; $p++) {
+    $provider = $providers[$p]
+    $cardH = [float] (Get-ProviderCardHeight $provider)
+    $cardRect = New-Object System.Drawing.RectangleF($cardX, [float] $y, $cardW, $cardH)
+    $cardPath = Get-RoundedPath $cardRect ([float] $script:Layout.CardRadius)
+    $Graphics.FillPath($cardBrush, $cardPath)
+    $Graphics.DrawPath($cardPen, $cardPath)
+    $cardPath.Dispose()
+
+    $headerY = [float] ($y + $script:Layout.CardPadTop)
+    $providerName = [string] $provider.label
+    $Graphics.DrawString($providerName, $script:Fonts.Provider, $textBrush, $innerX, $headerY, $leftFmt)
+    $nameW = $Graphics.MeasureString($providerName, $script:Fonts.Provider, [System.Drawing.PointF]::Empty, $leftFmt).Width
+
+    $tagParts = @()
+    if ($provider.plan) { $tagParts += [string] $provider.plan }
+    if ($provider.stale -or (Test-ProviderOutdated $provider)) { $tagParts += 'cache' }
+    $failure = Get-FailureLabel $provider
+    if ($failure) { $tagParts += $failure }
+    $tag = if ($tagParts.Count) { $dot + ($tagParts -join $dot) } else { '' }
+
+    $tagW = if ($tag) { $Graphics.MeasureString($tag, $script:Fonts.Meta, [System.Drawing.PointF]::Empty, $leftFmt).Width } else { 0.0 }
+    $costText = Get-CostText $provider
+    $costW = 0.0
+    if ($costText) {
+      $fullLeftW = $nameW + $tagW + 8
+      $minLeftW = $nameW + 10
+      $measuredCost = $Graphics.MeasureString($costText, $script:Fonts.Small, [System.Drawing.PointF]::Empty, $leftFmt).Width
+      if ($measuredCost -gt ($innerW - $fullLeftW)) {
+        $costText = ($costText -split $dot)[0]
+        $measuredCost = $Graphics.MeasureString($costText, $script:Fonts.Small, [System.Drawing.PointF]::Empty, $leftFmt).Width
+      }
+      if ($measuredCost -le ($innerW - $minLeftW)) {
+        $costW = $measuredCost
+        $costRect = New-Object System.Drawing.RectangleF($innerX, [float] ($headerY + 1.5), $innerW, 16)
+        $Graphics.DrawString($costText, $script:Fonts.Small, $mutedBrush, $costRect, $rightFmt)
+      }
+    }
+
+    if ($tag) {
+      $tagX = $innerX + $nameW
+      $tagMaxRight = if ($costW -gt 0) { $innerRight - $costW - 8 } else { $innerRight }
+      $tagAvailW = $tagMaxRight - $tagX
+      if ($tagAvailW -gt 16) {
+        $tagRect = New-Object System.Drawing.RectangleF($tagX, [float] ($headerY + 1), $tagAvailW, 16)
+        $Graphics.DrawString($tag, $script:Fonts.Meta, $mutedBrush, $tagRect, $leftFmt)
+      }
+    }
+
+    $rowY = $headerY + $script:Layout.ProviderH
+    $windows = @(if ($provider.windows) { $provider.windows })
+    if (-not $windows.Count) {
+      $Graphics.DrawString('Sem dados.', $script:Fonts.Meta, $mutedBrush, $innerX, [float] ($rowY + 1), $leftFmt)
+      $y += $cardH + $script:Layout.CardGap
       continue
     }
 
-    foreach ($window in @($provider.windows)) {
+    $providerOutdated = Test-ProviderOutdated $provider
+    for ($w = 0; $w -lt $windows.Count; $w++) {
+      $window = $windows[$w]
       $used = [double] $window.usedPercent
       $expired = Test-WindowExpired $window
-      $old = (Test-ProviderOutdated $provider) -or $expired
-      $tone = if ($old) { $script:Colors.Muted } else { Get-Tone $used }
+      $old = $providerOutdated -or $expired
+      $tone = if ($old) { $script:Colors.SubtleMuted } else { Get-Tone $used }
       $toneBrush = New-Object System.Drawing.SolidBrush $tone
+      $rowLabelBrush = if ($old) { $mutedBrush } else { $textBrush }
+      $rowValueBrush = if ($old) { $subtleBrush } else { $valueBrush }
 
-      $Graphics.DrawString((Get-WindowShortLabel $window), $script:Fonts.Body, $mutedBrush, [float] $pad, [float] ($y + 1))
+      $valueW = [float] $script:Layout.ValueW
+      $valueRect = New-Object System.Drawing.RectangleF(($innerRight - $valueW), $rowY, $valueW, 18)
+      $valueText = '{0:0}%' -f $used
+      $Graphics.DrawString($valueText, $script:Fonts.Value, $rowValueBrush, $valueRect, $rightFmt)
 
-      $barX = $pad + $script:Layout.LabelW
-      $barY = $y + 7
-      $trackRect = New-Object System.Drawing.RectangleF([float] $barX, [float] $barY, [float] $script:Layout.BarW, 6)
-      $trackPath = Get-RoundedPath $trackRect 3
+      $resetText = Format-ResetTime ([string] $window.resetsAt)
+      $resetRight = $innerRight - $valueW - 6
+      $resetW = 0.0
+      if ($resetText) {
+        $resetW = $Graphics.MeasureString($resetText, $script:Fonts.Meta, [System.Drawing.PointF]::Empty, $leftFmt).Width
+        $resetRect = New-Object System.Drawing.RectangleF($innerX, [float] ($rowY + 1), ($resetRight - $innerX), 18)
+        $Graphics.DrawString($resetText, $script:Fonts.Meta, $mutedBrush, $resetRect, $rightFmt)
+      }
+
+      $labelMaxRight = if ($resetW -gt 0) { $resetRight - $resetW - 10 } else { $resetRight - 6 }
+      $labelAvailW = [math]::Max(40, $labelMaxRight - $innerX)
+      $labelRect = New-Object System.Drawing.RectangleF($innerX, $rowY, [float] $labelAvailW, 18)
+      $Graphics.DrawString((Get-WindowDisplayLabel $window), $script:Fonts.Label, $rowLabelBrush, $labelRect, $leftFmt)
+
+      $barY = [float] ($rowY + $script:Layout.BarOffsetY)
+      $trackRect = New-Object System.Drawing.RectangleF($innerX, $barY, $innerW, $barH)
+      $trackPath = Get-RoundedPath $trackRect $barRadius
       $Graphics.FillPath($trackBrush, $trackPath)
       $trackPath.Dispose()
 
       if (-not $expired -and $used -gt 0) {
-        $fillWidth = [math]::Max(3, ($script:Layout.BarW * [math]::Min(100, [math]::Max(0, $used)) / 100))
-        $fillRect = New-Object System.Drawing.RectangleF([float] $barX, [float] $barY, [float] $fillWidth, 6)
-        $fillPath = Get-RoundedPath $fillRect 3
+        $fillWidth = [math]::Max($barH, ($innerW * [math]::Min(100, [math]::Max(0, $used)) / 100))
+        $fillRect = New-Object System.Drawing.RectangleF($innerX, $barY, [float] $fillWidth, $barH)
+        $fillPath = Get-RoundedPath $fillRect $barRadius
         $Graphics.FillPath($toneBrush, $fillPath)
         $fillPath.Dispose()
       }
 
-      $valueX = $barX + $script:Layout.BarW + 10
-      $valueText = '{0:0}%' -f $used
-      $Graphics.DrawString($valueText, $script:Fonts.Value, $toneBrush, [float] $valueX, [float] $y)
-
-      $resetText = Get-Countdown ([string] $window.resetsAt) -Short
-      if ($resetText) {
-        $Graphics.DrawString($resetText, $script:Fonts.Small, $mutedBrush, [float] ($valueX + $script:Layout.ValueW), [float] ($y + 1))
-      }
       $toneBrush.Dispose()
-      $y += $script:Layout.RowH
+      $rowY += $script:Layout.RowH
+      if ($w -lt ($windows.Count - 1)) { $rowY += $script:Layout.RowGap }
     }
-    $y += $script:Layout.ProviderGap
+    $y += $cardH + $script:Layout.CardGap
   }
 
+  $leftFmt.Dispose()
+  $rightFmt.Dispose()
   $textBrush.Dispose()
+  $valueBrush.Dispose()
   $mutedBrush.Dispose()
+  $subtleBrush.Dispose()
+  $cardBrush.Dispose()
   $trackBrush.Dispose()
   $borderPen.Dispose()
+  $cardPen.Dispose()
 }
 
 function New-TrayIcon {
@@ -247,7 +330,7 @@ function New-TrayIcon {
     $tone = Get-Tone ([double] $worst.usedPercent)
     $text = '{0:0}' -f [double] $worst.usedPercent
   } else {
-    $tone = $script:Colors.Muted
+    $tone = $script:Colors.IconMuted
     $text = '?'
   }
 
@@ -447,7 +530,7 @@ function Remove-StartupTask {
 # Na abertura: quem tinha o atalho antigo passa para a tarefa, e uma tarefa que aponta para um
 # host inexistente ou para outro tokenbar.ps1 é refeita. Devolve se a opção está ativa.
 function Sync-StartupRegistration {
-  $hadLink = Test-Path -LiteralPath $script:StartupLink -PathType Leaf
+  $hadLink = [bool] $script:StartupLink -and (Test-Path -LiteralPath $script:StartupLink -PathType Leaf)
   if ($hadLink) {
     try {
       Remove-Item -LiteralPath $script:StartupLink -Force -ErrorAction Stop

@@ -7,6 +7,19 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não publicado]
 
+### Painel da bandeja redesenhado com barras em largura total
+
+- O painel da bandeja adota cards arredondados em grafite neutro (um por provedor) e
+  janelas em duas linhas: rótulo legível à esquerda, horário exato de renovação
+  (`Renova às 15:20`, `Renova dom 14:00`) e percentual à direita, e barra fina em pílula
+  ocupando toda a largura do card.
+- Paleta simplificada para azul no uso normal e vermelho a partir de 90% (tanto nas barras
+  quanto no ícone da bandeja), mantendo o texto acessível por extenso para leitores de tela.
+- Coletor do Antigravity recebe folga maior no timeout (`--print-timeout 15s`, processo em
+  18 s e `UsageManager` em 20 s) e piso de 55 s (`ANTIGRAVITY_REFRESH_MS`), evitando que o
+  ciclo de 60 s do daemon perca a janela de repetição por milissegundos e mantenha o provedor
+  em `cache · sem resposta` por dois minutos seguidos.
+
 ### Cotas do Antigravity pelo JSON do CLI
 
 - A consulta passa a usar `agy --print /usage --output-format json`, que traz a fração
